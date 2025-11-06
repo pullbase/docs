@@ -1,0 +1,148 @@
+---
+title: "CLI Reference"
+description: "Command reference for the pullbasectl utility."
+---
+
+`pullbasectl` ships with the Pullbase Docker image and is available inside the container at `/pullbasectl`. You can run it from the host by invoking the container or by copying the binary out of the image.
+
+```bash
+# Run pullbasectl from the official image
+alias pullbasectl='docker run --rm pullbaseio/pullbase:latest pullbasectl'
+```
+
+## Authentication commands
+
+### `pullbasectl auth bootstrap-admin`
+
+Initializes the first admin using the one-time bootstrap secret.
+
+<ParamField flag="--server-url" type="string" required>
+URL of the Pullbase API (HTTPS).
+</ParamField>
+<ParamField flag="--bootstrap-secret" type="string">
+Secret value provided by the container. Mutually exclusive with `--bootstrap-secret-file`.
+</ParamField>
+<ParamField flag="--bootstrap-secret-file" type="path">
+Path to a file containing the bootstrap secret. Use when running inside a container.
+</ParamField>
+<ParamField flag="--username" type="string" required>
+Username for the new admin.
+</ParamField>
+<ParamField flag="--password" type="string" required>
+Password for the new admin (minimum 12 characters).
+</ParamField>
+
+<RequestExample>
+```bash
+pullbasectl auth bootstrap-admin \
+  --server-url https://localhost:8080 \
+  --bootstrap-secret-file /tmp/bootstrap.txt \
+  --username admin_user \
+  --password 'ChangeMeNow123!'
+```
+</RequestExample>
+
+<ResponseExample>
+```json Success
+{
+  "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "user": { "id": 1, "username": "admin_user", "role": "admin" }
+}
+```
+</ResponseExample>
+
+### `pullbasectl auth login`
+
+Exchange a username and password for an admin JWT.
+
+```bash
+pullbasectl auth login \
+  --server-url https://localhost:8080 \
+  --username admin_user \
+  --password 'ChangeMeNow123!'
+```
+
+Use the returned token for subsequent CLI calls with `--admin-token`.
+
+## GitHub App commands
+
+### `pullbasectl github-app bootstrap`
+
+Validates GitHub App credentials locally and, when combined with `--server-url`, registers an environment.
+
+Key flags:
+
+- `--app-id`, `--private-key`, `--installation-id`, `--repository-id`, `--app-slug`
+- `--server-url`, `--admin-token` (optional) to create the environment in Pullbase
+- `--environment-name`, `--repo-url`, `--branch`, `--deploy-path`
+
+### `pullbasectl github-app status`
+
+Retrieve the GitHub App status for an environment:
+
+```bash
+pullbasectl github-app status \
+  --server-url https://localhost:8080 \
+  --admin-token $ADMIN_JWT \
+  --environment-id 5
+```
+
+## Agent token commands
+
+### `pullbasectl tokens list`
+
+List agent tokens for a server.
+
+```bash
+pullbasectl tokens list \
+  --server-url https://localhost:8080 \
+  --server-id web-01 \
+  --admin-token $ADMIN_JWT
+```
+
+### `pullbasectl tokens create`
+
+Create an agent token. Provide `--description` and optional `--expires-in` (days).
+
+### `pullbasectl tokens revoke`
+
+Deactivate a token by ID.
+
+## User commands
+
+### `pullbasectl users create`
+
+Create a new user.
+
+```bash
+pullbasectl users create \
+  --server-url https://localhost:8080 \
+  --admin-token $ADMIN_JWT \
+  --new-username ops_user \
+  --new-password 'VerySecurePass!2024' \
+  --role viewer
+```
+
+### `pullbasectl users list`
+
+Paginate through active users. Supports `--role`, `--limit`, and `--offset` flags.
+
+<Info>
+User deletion currently requires the web UI or the REST API (`DELETE /api/v1/users/{userID}`). CLI support is planned.
+</Info>
+
+## Bootstrap wizard (interactive)
+
+`pullbasectl bootstrap wizard` guides you through first-run setup, including admin creation and GitHub App configuration. The wizard prompts for values interactively and saves them to the server via the API.
+
+## Upcoming commands
+
+The next release will expose `pullbasectl environments` and `pullbasectl servers` subcommands for full lifecycle management. Until then, use the REST API or web UI for environment and server CRUD.
+
+<Tip>
+Set the environment variable `PULLBASE_ADMIN_TOKEN` to avoid repeating `--admin-token` on every command:
+
+```bash
+export PULLBASE_ADMIN_TOKEN=$(pullbasectl auth login ... | jq -r '.access_token')
+```
+</Tip>

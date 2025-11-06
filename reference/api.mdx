@@ -1,0 +1,235 @@
+---
+title: "API Reference"
+description: "REST API endpoints for the Pullbase server."
+---
+
+All endpoints require HTTPS. Admin and viewer accounts authenticate with bearer tokens, while agents use their agent token.
+
+<BaseUrl>
+https://pullbase.example.com/api/v1
+</BaseUrl>
+
+## Authentication
+
+### `POST /auth/login`
+
+<RequestExample>
+```bash cURL
+curl -k -X POST $BASE_URL/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "username": "admin_user",
+    "password": "ChangeMeNow123!"
+  }'
+```
+</RequestExample>
+
+<ResponseExample>
+```json Success
+{
+  "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "user": {
+    "id": 1,
+    "username": "admin_user",
+    "role": "admin"
+  }
+}
+```
+</ResponseExample>
+
+### `GET /auth/me`
+
+Returns the authenticated user. Requires `Authorization: Bearer <token>`.
+
+## Environments
+
+### `GET /environments`
+
+<ListResponse>
+```json
+[
+  {
+    "id": 5,
+    "name": "staging",
+    "repo_url": "https://github.com/your-org/configs.git",
+    "branch": "main",
+    "deploy_path": "environments/staging/config.yaml",
+    "auto_reconcile": true
+  }
+]
+```
+</ListResponse>
+
+### `POST /environments`
+
+<RequestExample>
+```bash cURL
+curl -k -X POST $BASE_URL/environments \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "name": "staging",
+    "description": "Staging web servers",
+    "repo_url": "https://github.com/your-org/configs.git",
+    "branch": "main",
+    "deploy_path": "environments/staging/config.yaml",
+    "github_app": {
+      "app_id": 2113565,
+      "installation_id": 89968159,
+      "repository_id": 964854370,
+      "app_slug": "pullbase-config"
+    }
+  }'
+```
+</RequestExample>
+
+<ResponseExample>
+```json Success
+{
+  "id": 5,
+  "name": "staging",
+  "auto_reconcile": true,
+  "created_at": "2025-01-15T12:34:56Z"
+}
+```
+</ResponseExample>
+
+<Warning>
+Deleting an environment (`DELETE /environments/{id}`) cascades to servers in that environment. De-register servers first if you want a clean transition.
+</Warning>
+
+## Servers
+
+### `POST /servers`
+
+<RequestExample>
+```bash cURL
+curl -k -X POST $BASE_URL/servers \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "id": "web-01",
+    "name": "staging-web-01",
+    "environment_id": 5
+  }'
+```
+</RequestExample>
+
+<ResponseExample>
+```json Success
+{
+  "server": {
+    "id": "web-01",
+    "name": "staging-web-01",
+    "environment_id": 5
+  },
+  "token": "pbt_9BFz...",
+  "installation_info": {
+    "instructions": "Configure AGENT_TOKEN with this value when deploying the agent.",
+    "example_cmd": "docker run --rm pullbaseio/pullbase-agent:latest --token pbt_9BFz..."
+  }
+}
+```
+</ResponseExample>
+
+### `GET /servers/{id}/status/history`
+
+Returns chronological status entries including commit hash, drift flag, and timestamp.
+
+### Token endpoints
+
+- `GET /servers/{id}/tokens` – list tokens
+- `POST /servers/{id}/tokens` – create token (`description`, `expires_in_days`)
+- `DELETE /servers/{id}/tokens/{tokenID}` – deactivate token
+
+## User management
+
+### `GET /users`
+
+Supports pagination and role filtering.
+
+<ParamField query="limit" type="integer" default="100">
+Maximum number of users per page (1–500).
+</ParamField>
+
+### `POST /users`
+
+<RequestExample>
+```bash cURL
+curl -k -X POST $BASE_URL/users \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "username": "ops_user",
+    "password": "StrongPassword!2024",
+    "role": "viewer"
+  }'
+```
+</RequestExample>
+
+### `DELETE /users/{userID}`
+
+<RequestExample>
+```bash cURL
+curl -k -X DELETE $BASE_URL/users/7 \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{ "confirm_username": "ops_user" }'
+```
+</RequestExample>
+
+<ResponseExample>
+```json Success
+{}
+```
+</ResponseExample>
+
+## Agent endpoints
+
+### `GET /agent/serverinfo`
+
+Agents call this endpoint with their agent token.
+
+<ResponseExample>
+```json Success
+{
+  "repo_url": "https://github.com/your-org/configs.git",
+  "branch": "main",
+  "deploy_path": "environments/staging/config.yaml",
+  "target_commit_hash": "8a9d3c...",
+  "auto_reconcile": true
+}
+```
+</ResponseExample>
+
+### `GET /agent/git-token`
+
+Returns a short-lived GitHub installation token when the environment uses a GitHub App.
+
+### `PUT /agent/status`
+
+<RequestExample>
+```bash cURL
+curl -k -X PUT $BASE_URL/agent/status \
+  -H "Authorization: Bearer $AGENT_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "commit_hash": "8a9d3c...",
+    "is_drifted": false,
+    "status": "applied",
+    "error_message": null
+  }'
+```
+</RequestExample>
+
+## Error handling
+
+- `400 Bad Request` – validation failure (details in the `error` field)
+- `401 Unauthorized` – missing or invalid token
+- `403 Forbidden` – caller lacks the required role (for example, viewer attempting an admin action)
+- `404 Not Found` – resource does not exist or has been deleted
+- `500 Internal Server Error` – unexpected server error (check server logs)
+
+<Tip>
+Use `-k` during local testing with self-signed certificates. In production, run `curl` with your CA bundle: `curl --cacert /path/to/ca.crt ...`.
+</Tip>

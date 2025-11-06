@@ -1,11 +1,11 @@
 {
   "$schema": "https://mintlify.com/docs.json",
   "theme": "mint",
-  "name": "Mint Starter Kit",
+  "name": "Pullbase Documentation",
   "colors": {
-    "primary": "#16A34A",
-    "light": "#07C983",
-    "dark": "#15803D"
+    "primary": "#1f3448",
+    "light": "#d9e2ec",
+    "dark": "#102132"
   },
   "favicon": "/favicon.svg",
   "navigation": {
@@ -14,55 +14,48 @@
         "tab": "Guides",
         "groups": [
           {
-            "group": "Getting started",
+            "group": "Foundations",
             "pages": [
-              "index",
+              "introduction",
               "quickstart",
-              "development"
+              "architecture-overview",
+              "concepts"
             ]
           },
           {
-            "group": "Customization",
+            "group": "Setup",
             "pages": [
-              "essentials/settings",
-              "essentials/navigation"
+              "installation",
+              "bootstrapping",
+              "github-app-integration",
+              "configuration-repository"
             ]
           },
           {
-            "group": "Writing content",
+            "group": "Operations",
             "pages": [
-              "essentials/markdown",
-              "essentials/code",
-              "essentials/images",
-              "essentials/reusable-snippets"
-            ]
-          },
-          {
-            "group": "AI tools",
-            "pages": [
-              "ai-tools/cursor",
-              "ai-tools/claude-code",
-              "ai-tools/windsurf"
+              "environments-and-servers",
+              "agent-operations",
+              "web-ui",
+              "security-hardening",
+              "operations-troubleshooting"
             ]
           }
         ]
       },
       {
-        "tab": "API reference",
+        "tab": "Reference",
         "groups": [
           {
-            "group": "API documentation",
+            "group": "CLI",
             "pages": [
-              "api-reference/introduction"
+              "reference/cli"
             ]
           },
           {
-            "group": "Endpoint examples",
+            "group": "API",
             "pages": [
-              "api-reference/endpoint/get",
-              "api-reference/endpoint/create",
-              "api-reference/endpoint/delete",
-              "api-reference/endpoint/webhook"
+              "reference/api"
             ]
           }
         ]
@@ -71,14 +64,9 @@
     "global": {
       "anchors": [
         {
-          "anchor": "Documentation",
-          "href": "https://mintlify.com/docs",
-          "icon": "book-open-cover"
-        },
-        {
-          "anchor": "Blog",
-          "href": "https://mintlify.com/blog",
-          "icon": "newspaper"
+          "anchor": "Pullbase Website",
+          "href": "https://pullbase.io",
+          "icon": "globe"
         }
       ]
     }
@@ -90,33 +78,26 @@
   "navbar": {
     "links": [
       {
-        "label": "Support",
-        "href": "mailto:hi@mintlify.com"
+        "label": "Website",
+        "href": "https://pullbase.io"
       }
-    ],
-    "primary": {
-      "type": "button",
-      "label": "Dashboard",
-      "href": "https://dashboard.mintlify.com"
-    }
+    ]
   },
   "contextual": {
     "options": [
-     "copy",
-     "view",
-     "chatgpt",
-     "claude",
-     "perplexity",
-     "mcp",
-     "cursor",
-     "vscode"
-   ]
+      "copy",
+      "view",
+      "chatgpt",
+      "claude",
+      "perplexity",
+      "mcp",
+      "cursor",
+      "vscode"
+    ]
   },
   "footer": {
     "socials": {
-      "x": "https://x.com/mintlify",
-      "github": "https://github.com/mintlify",
-      "linkedin": "https://linkedin.com/company/mintlify"
+      "github": "https://github.com/pullbaseio/pullbase"
     }
   }
 }
