@@ -1,0 +1,205 @@
+---
+title: "Configuration Repository Guide"
+description: "Structure your Git repository and author config.yaml files for Pullbase agents."
+---
+
+Pullbase reads your Git repository to determine the desired state for each environment. By convention you store a `config.yaml` file at the root of the environment directory.
+
+## Repository layout
+
+```
+configs/
+├── environments/
+│   ├── production/
+│   │   └── config.yaml
+│   └── staging/
+│       └── config.yaml
+├── shared/
+│   ├── nginx.conf
+│   └── scripts/
+└── README.md
+```
+
+- Keep environment-specific files under `environments/<name>`
+- Store shared templates or scripts outside the environment folder
+- Reference shared files from `config.yaml` using relative paths
+
+## config.yaml schema
+
+The agent parses this file to reconcile packages, services, and files on the managed host.
+
+```yaml config.yaml
+serverMetadata:
+  name: web-01
+  environment: production
+
+packages:
+  - name: nginx
+    state: latest
+  - name: curl
+    state: present
+  - name: vim
+    state: absent
+
+services:
+  - name: nginx
+    enabled: true
+    state: running
+    managed: true
+
+files:
+  - path: /etc/nginx/nginx.conf
+    content: |
+      user nginx;
+      worker_processes auto;
+      events {
+        worker_connections 1024;
+      }
+      http {
+        include       /etc/nginx/mime.types;
+        default_type  application/octet-stream;
+        sendfile        on;
+        keepalive_timeout  65;
+        server {
+          listen 80;
+          location / {
+            return 200 'Hello from Pullbase';
+          }
+        }
+      }
+    mode: "0644"
+    reloadService: nginx
+
+system:
+  serviceManager: systemd
+  containerized: false
+```
+
+### Sections explained
+
+#### `serverMetadata`
+
+Optional metadata that appears in the UI and log entries.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | string | Human-readable server name |
+| `environment` | string | Environment identifier for logging |
+
+#### `packages`
+
+Package manager operations. The agent auto-detects the package manager (APK, APT, YUM/DNF) based on the host OS.
+
+| Field | Type | Values | Description |
+|-------|------|--------|-------------|
+| `name` | string | - | Package name |
+| `state` | string | `present`, `latest`, `absent` | Desired package state |
+
+- `present`: Install if missing
+- `latest`: Install or update to latest version
+- `absent`: Remove if installed
+
+#### `services`
+
+Service management using the detected or configured service manager.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `name` | string | - | Service name |
+| `enabled` | boolean | - | Start on boot |
+| `state` | string | - | `running` or `stopped` |
+| `managed` | boolean | `true` | Set to `false` to observe without altering state |
+
+#### `files`
+
+File content management with optional service reload triggers.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `path` | string | Absolute path on the target system |
+| `content` | string | File content (inline) |
+| `source` | string | Relative path in the repo (alternative to `content`) |
+| `mode` | string | File permissions in octal (e.g., `"0644"`) |
+| `reloadService` | string | Service to reload/restart when file changes |
+| `reloadCommand` | string | Custom command to run when file changes |
+
+#### `system`
+
+Optional system configuration for the agent.
+
+| Field | Type | Values | Description |
+|-------|------|--------|-------------|
+| `serviceManager` | string | `systemd`, `supervisor`, `openrc` | Override auto-detected service manager |
+| `containerized` | boolean | `true`/`false` | Indicate if running in a container |
+
+<Tip>
+Large files can be committed alongside `config.yaml` and referenced with the `source` attribute instead of inline `content`.
+</Tip>
+
+### Example with source files
+
+```yaml
+files:
+  - path: /etc/nginx/nginx.conf
+    source: ../shared/nginx.conf
+    reloadService: nginx
+```
+
+Ensure the relative path exists in the repository. The agent copies the file to the target location during reconciliation.
+
+### Example with reload command
+
+```yaml
+files:
+  - path: /etc/myapp/config.json
+    content: |
+      {"debug": false, "port": 3000}
+    mode: "0640"
+    reloadCommand: systemctl reload myapp
+```
+
+## Supported package managers
+
+The agent auto-detects and supports:
+
+| Package Manager | Distribution |
+|-----------------|--------------|
+| APK | Alpine Linux |
+| APT | Debian, Ubuntu |
+| YUM | RHEL, CentOS 7 |
+| DNF | RHEL 8+, Fedora, Rocky Linux |
+
+## Supported service managers
+
+The agent auto-detects and supports:
+
+| Service Manager | Init System |
+|-----------------|-------------|
+| systemd | Most modern Linux distributions |
+| supervisor | Docker containers, custom setups |
+| OpenRC | Alpine Linux, Gentoo |
+
+Override auto-detection using the `system.serviceManager` field when the agent runs in an environment where detection fails (e.g., containers without full init).
+
+## Secrets management
+
+- Avoid committing secrets to Git. Store them in your secret manager and inject them at runtime (for example, via environment variables or file mounts).
+- If you must reference credentials, use encrypted files and have the agent decrypt them in a post-processing step.
+- Configure package repositories to use system-level credentials (e.g., `/etc/apt/auth.conf`) rather than embedding tokens in `config.yaml`.
+
+## Branching strategy
+
+- Use one branch per promotion stage (for example, `main` → `staging` → `production`).
+- Add Pullbase environments pointing to the relevant branch and deploy path.
+- Protect branches with pull requests and CI validation to ensure the desired state compiles.
+
+## Testing configuration changes
+
+1. Update `config.yaml` and related files in a feature branch.
+2. Validate YAML syntax locally with a linter.
+3. Merge to the environment branch.
+4. Trigger a webhook or rely on polling to publish the new commit.
+
+<Note>
+The agent includes built-in validation for YAML structure, but semantic checks (such as verifying package names) depend on the target OS. Test changes in staging before promoting to production environments.
+</Note>

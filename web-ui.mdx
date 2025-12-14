@@ -1,0 +1,81 @@
+---
+title: "Web UI Walkthrough"
+description: "Explore the Pullbase web interface for day-to-day operations."
+---
+
+The Pullbase web UI offers a fast way to review environments, manage users, and issue agent tokens. Use it alongside the CLI and API for visibility and manual operations.
+
+## Sign-in
+
+- Visit your Pullbase URL (e.g., `http://localhost:8080` for development or `https://pullbase.example.com` for production).
+- Enter the admin or user credentials created during bootstrapping.
+- The session cookie stores a JWT; sign out via the avatar menu when finished.
+
+<Card title="Pullbase Login" img="/images/pullbase-login.png">
+</Card>
+
+## Dashboard
+
+The landing page summarizes key metrics:
+
+- Environment count and drift status
+- Recent activity feed (status reports, token creation, rollbacks)
+- Quick links to environments and servers
+
+<Card title="Pullbase Dashboard" img="/images/pullbase-dashboard.png">
+</Card>
+
+## Environments view
+
+Navigate to **Environments** to manage Git metadata.
+
+- Search or filter environments by name
+- Inspect repository URL, branch, deploy path, and target commit hash
+- Toggle auto-reconcile, edit metadata, or delete the environment
+- Initiate rollbacks and view rollback history
+
+<Card title="Pullbase Environment View" img="/images/pullbase-environment-view.png">
+</Card>
+
+## Servers View
+
+Navigate to **Servers** to see all Pullbase managed servers.
+
+- Search or filter servers by name
+- Inspect environment association and status
+- View last applied commit and drift status
+
+<Card title="Pullbase Servers View" img="/images/pullbase-servers-view.png">
+</Card>
+
+## Server detail view
+
+From an environment page, choose a server to see its status timeline.
+
+- View last applied commit, drift flag, and timestamps
+- Monitor reconciliation history and error messages
+- Issue or revoke agent tokens directly from the server page
+
+<Card title="Pullbase Server Detail View" img="/images/pullbase-server-detail-page.png">
+</Card>
+
+## Token management
+
+- Use **Add Token** to generate a new agent token
+- Tokens include description and optional expiration date
+- Copy the token immediately; Pullbase never shows the secret again (tokens are hashed at rest)
+
+<Warning>
+Rotate tokens by creating a new one, updating the agent, and then revoking the old token. Avoid deleting active tokens before the agent refreshes.
+</Warning>
+
+## User management
+
+Accessible via **Settings → Users** (admins only).
+
+- Create, list, or delete users
+- Set roles (`admin`, `user`, `viewer`)
+- Deletion requires typing the username to confirm; Pullbase blocks deletion of the last active admin or your own account
+
+<Card title="Pullbase User Management View" img="/images/pullbase-users-view.png">
+</Card>

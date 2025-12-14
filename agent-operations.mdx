@@ -1,0 +1,179 @@
+---
+title: "Agent Operations"
+description: "Deploy, configure, and troubleshoot the Pullbase agent."
+---
+
+The Pullbase agent enforces the desired state on each managed server. You can run it as a container (preferred for containerized workloads) or as a native binary managed by systemd.
+
+## Deployment methods
+
+### Containerized agent
+
+```yaml docker-compose-agent.yml
+services:
+  pullbase-agent:
+    image: pullbaseio/pullbase-agent:latest
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      SERVER_ID: web-01
+      CENTRAL_SERVER_URL: https://pullbase.example.com
+      AGENT_TOKEN: ${AGENT_TOKEN}
+      CACERT_PATH: /certs/ca.crt
+      SKIP_TLS_VERIFY: "false"
+    volumes:
+      - /etc/pullbase/certs:/certs:ro
+      - /:/host:rw
+```
+
+- Mount the host filesystem so the agent can call package managers and manage services.
+- Provide the CA bundle required to verify Pullbase's TLS certificate.
+- The poll interval is fixed at 30 seconds (not currently configurable).
+
+### Native binary (systemd)
+
+```ini /etc/systemd/system/pullbase-agent.service
+[Unit]
+Description=Pullbase Agent
+After=network-online.target
+
+[Service]
+EnvironmentFile=/etc/pullbase/agent.env
+ExecStart=/usr/local/bin/pullbase-agent
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+```
+
+`/etc/pullbase/agent.env` contains the environment variables described below.
+
+## Environment variables
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `SERVER_ID` | Yes | - | Must match the server ID registered in Pullbase |
+| `CENTRAL_SERVER_URL` | Yes | - | Base URL of the Pullbase API (e.g., `https://pullbase.example.com`) |
+| `AGENT_TOKEN` | Yes | - | Token provided when the server is created. Rotate regularly. |
+| `CACERT_PATH` | No | - | Path to CA bundle that trusts the Pullbase certificate |
+| `SKIP_TLS_VERIFY` | No | `false` | Set to `true` only for development with self-signed certificates |
+
+<Note>
+The agent also supports legacy environment variable names with `PULLBASE_` prefix: `PULLBASE_SERVER_ID`, `PULLBASE_SERVER_URL`, `PULLBASE_AGENT_TOKEN`, `PULLBASE_CACERT_PATH`.
+</Note>
+
+### Authentication methods
+
+The agent supports two authentication methods:
+
+1. **Agent Token (recommended)**: Use `AGENT_TOKEN` with a token generated via the CLI or API when creating a server.
+
+2. **Username/Password (legacy)**: Use `AGENT_USERNAME` and `AGENT_PASSWORD` for JWT-based authentication. This method is deprecated in favor of agent tokens.
+
+## Supported package managers
+
+The agent auto-detects the host's package manager:
+
+| Package Manager | Distribution | Detection |
+|-----------------|--------------|-----------|
+| APK | Alpine Linux | Checks for `apk` command |
+| APT | Debian, Ubuntu | Checks for `apt-get` command |
+| DNF | RHEL 8+, Fedora, Rocky Linux | Checks for `dnf` command |
+| YUM | RHEL 7, CentOS 7 | Checks for `yum` command (fallback) |
+
+Package states:
+- `present`: Install if not present
+- `latest`: Install or upgrade to latest available version
+- `absent`: Remove if installed
+
+## Supported service managers
+
+The agent auto-detects the init system:
+
+| Service Manager | Init System | Detection |
+|-----------------|-------------|-----------|
+| systemd | Most modern distributions | Checks for `systemctl` and `/run/systemd/system` |
+| supervisor | Docker, custom setups | Checks for `supervisorctl` |
+| OpenRC | Alpine Linux, Gentoo | Checks for `rc-service` |
+
+Override detection by setting `system.serviceManager` in `config.yaml`:
+
+```yaml
+system:
+  serviceManager: supervisor
+  containerized: true
+```
+
+## Reconciliation cycle
+
+<Steps>
+<Step title="Fetch configuration">
+  Agent authenticates with its token and calls `GET /api/v1/agent/serverinfo` to obtain Git metadata and the target commit hash.
+</Step>
+<Step title="Obtain Git credentials">
+  If the environment uses a GitHub App, agent invokes `GET /api/v1/agent/git-token` to retrieve a short-lived installation token.
+</Step>
+<Step title="Clone or update repository">
+  Repository is cloned into `/etc/pullbase/repo`. The agent checks out the target commit.
+</Step>
+<Step title="Apply desired state">
+  Packages, services, and files from `config.yaml` are reconciled using the detected package and service managers.
+</Step>
+<Step title="Report status">
+  Agent posts results (status, drift, error message) to `PUT /api/v1/agent/status`.
+</Step>
+</Steps>
+
+## Drift detection and auto-reconciliation
+
+The agent performs drift checks every 60 seconds and compares:
+- Package installation state
+- Service running/enabled state
+- File content (SHA256 hash) and permissions
+
+When drift is detected and auto-reconcile is enabled for the server's environment, the agent automatically applies the configuration to restore desired state.
+
+## Logging
+
+- **Container logs:** `docker logs pullbase-agent`
+- **Systemd logs:** `journalctl -u pullbase-agent -f`
+
+The agent logs reconciliation details including:
+- Package installation/removal operations
+- Service start/stop/enable/disable operations
+- File writes and permission changes
+- Drift detection results
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="401 Unauthorized">
+    - Token revoked or expired → create a new token and redeploy the agent.
+    - Server ID mismatch → ensure `SERVER_ID` matches the registered server.
+    - Clock skew → ensure NTP is running; JWT validation is time-based.
+  </Accordion>
+  <Accordion title="Git clone failures">
+    - Check network reachability to GitHub (proxy, firewall).
+    - For private repos, confirm the GitHub App installation and permissions.
+    - Validate `CACERT_PATH` so TLS trust is correct.
+  </Accordion>
+  <Accordion title="Package manager errors">
+    - Ensure the package manager is available on the host.
+    - For containers, install necessary tooling (`apk add`, `apt install`, etc.).
+    - Ensure the agent runs with sufficient privileges when managing host packages/services.
+  </Accordion>
+  <Accordion title="Service manager not detected">
+    - Override auto-detection by setting `system.serviceManager` in `config.yaml`.
+    - For Docker containers without a full init system, use `supervisor` as the service manager.
+    - Ensure the service manager commands (`systemctl`, `supervisorctl`, `rc-service`) are in PATH.
+  </Accordion>
+  <Accordion title="File permission issues">
+    - Specify `mode` in `config.yaml` (e.g., `"0644"`).
+    - Confirm the agent runs as root (required to manage system files/services).
+  </Accordion>
+</AccordionGroup>
+
+<Warning>
+Granting the agent container host filesystem access effectively gives it root privileges. Restrict the environment, monitor token usage, and rotate tokens after operational tasks.
+</Warning>

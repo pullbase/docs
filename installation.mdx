@@ -1,0 +1,215 @@
+---
+title: "Installation"
+description: "Install Pullbase with Docker Compose or deploy the server to your infrastructure."
+---
+
+Pullbase distributes a Docker image that bundles the server, web UI, and CLI. Pair it with PostgreSQL 15+ to run the central server.
+
+## Prerequisites
+
+- Docker 24.0+ with the Compose plugin
+- PostgreSQL 15+ (container or managed service)
+- Git repository containing your configuration (`config.yaml`)
+- (Production) Reverse proxy for TLS termination
+
+<Note>
+The quickstart spins up everything on one host. In production, run PostgreSQL on managed infrastructure, protect secrets with your secret manager, and terminate TLS at a reverse proxy.
+</Note>
+
+## File layout
+
+```
+/opt/pullbase/
+├── docker-compose.yml
+├── .env
+├── config/
+│   └── github-app.pem (optional)
+└── logs/
+```
+
+- `config/`: Mount GitHub App private key or other secrets read-only.
+- `logs/`: Optional bind mount if you collect logs from the filesystem (otherwise rely on container logs).
+
+## Environment variables
+
+Pullbase uses environment variables for configuration. All variables use the `PULLBASE_` prefix.
+
+### Database configuration
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `PULLBASE_DB_HOST` | Yes | - | PostgreSQL host |
+| `PULLBASE_DB_PORT` | No | `5432` | PostgreSQL port |
+| `PULLBASE_DB_USER` | Yes | - | Database user |
+| `PULLBASE_DB_PASSWORD` | Yes | - | Database password |
+| `PULLBASE_DB_NAME` | Yes | - | Database name |
+| `PULLBASE_DB_SSLMODE` | No | `disable` | SSL mode (`disable`, `require`, `verify-full`) |
+
+### Server configuration
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `PULLBASE_SERVER_PORT` | No | `8080` | HTTP listen port |
+| `PULLBASE_SERVER_HOST` | No | `0.0.0.0` | HTTP listen address |
+
+### Authentication
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `PULLBASE_JWT_SECRET` | Yes | - | Secret for signing JWT tokens (min 32 chars) |
+| `PULLBASE_JWT_EXPIRY_HOURS` | No | `24` | JWT token expiry in hours |
+
+### Git integration
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `PULLBASE_GIT_ENABLED` | No | `true` | Enable Git integration |
+| `PULLBASE_GIT_CLONE_PATH` | No | `./git-repos` | Path for cloning repositories |
+| `PULLBASE_GIT_POLL_INTERVAL` | No | `60` | Git polling interval in seconds |
+
+### GitHub App (for private repositories)
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `PULLBASE_GITHUB_APP_ID` | When Git enabled | - | GitHub App ID |
+| `PULLBASE_GITHUB_APP_PRIVATE_KEY_PATH` | When Git enabled | - | Path to GitHub App private key |
+| `PULLBASE_GITHUB_APP_API_BASE_URL` | No | `https://api.github.com` | GitHub API URL (for GHES) |
+
+### Webhooks
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `PULLBASE_WEBHOOK_SECRET_KEY` | Yes | - | Secret for validating webhook signatures |
+
+### Bootstrap
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `PULLBASE_BOOTSTRAP_SECRET` | No | - | Bootstrap secret (alternative to file) |
+| `PULLBASE_BOOTSTRAP_SECRET_FILE` | No | `bootstrap-admin-secret.txt` | Path to bootstrap secret file |
+
+## Compose template
+
+```yaml docker-compose.yml
+version: '3.9'
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: pullbaseuser
+      POSTGRES_PASSWORD: pullbasepass
+      POSTGRES_DB: pullbasedb
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U pullbaseuser -d pullbasedb']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  pullbase:
+    image: pullbaseio/pullbase:latest
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PULLBASE_DB_HOST: db
+      PULLBASE_DB_PORT: 5432
+      PULLBASE_DB_USER: pullbaseuser
+      PULLBASE_DB_PASSWORD: pullbasepass
+      PULLBASE_DB_NAME: pullbasedb
+      PULLBASE_DB_SSLMODE: disable
+      PULLBASE_SERVER_PORT: 8080
+      PULLBASE_SERVER_HOST: 0.0.0.0
+      PULLBASE_JWT_SECRET: ${PULLBASE_JWT_SECRET}
+      PULLBASE_JWT_EXPIRY_HOURS: 24
+      PULLBASE_WEBHOOK_SECRET_KEY: ${PULLBASE_WEBHOOK_SECRET_KEY}
+      PULLBASE_GIT_ENABLED: ${PULLBASE_GIT_ENABLED:-false}
+      PULLBASE_GITHUB_APP_ID: ${PULLBASE_GITHUB_APP_ID:-}
+      PULLBASE_GITHUB_APP_PRIVATE_KEY_PATH: /config/github-app.pem
+    volumes:
+      - ./config:/config:ro
+    ports:
+      - '8080:8080'
+
+volumes:
+  postgres_data:
+```
+
+Populate secrets in `.env`:
+
+```bash
+cat <<'ENV' > .env
+PULLBASE_JWT_SECRET=$(openssl rand -hex 32)
+PULLBASE_WEBHOOK_SECRET_KEY=$(openssl rand -hex 32)
+PULLBASE_GIT_ENABLED=false
+ENV
+```
+
+## Start Pullbase
+
+<Steps>
+<Step title="Bring up the stack">
+  ```bash
+  docker compose up -d
+  ```
+</Step>
+<Step title="Verify health">
+  ```bash
+  curl http://localhost:8080/api/v1/healthz
+  ```
+</Step>
+<Step title="Check logs">
+  ```bash
+  docker compose logs -f pullbase
+  ```
+</Step>
+</Steps>
+
+## Use an external database
+
+If you rely on Amazon RDS, Azure Database for PostgreSQL, or another managed service:
+
+1. Create the database and user with the required privileges.
+2. Set `PULLBASE_DB_HOST`, `PULLBASE_DB_USER`, `PULLBASE_DB_PASSWORD`, `PULLBASE_DB_NAME` to the managed instance.
+3. Enable TLS by setting `PULLBASE_DB_SSLMODE=require` or `PULLBASE_DB_SSLMODE=verify-full`.
+4. Remove the `db` service from your Compose file.
+
+## TLS termination
+
+Pullbase runs on HTTP internally. For production, place it behind a reverse proxy that terminates TLS:
+
+```nginx
+# Example NGINX configuration
+server {
+    listen 443 ssl;
+    server_name pullbase.example.com;
+    
+    ssl_certificate /etc/ssl/certs/pullbase.crt;
+    ssl_certificate_key /etc/ssl/private/pullbase.key;
+    
+    location / {
+        proxy_pass http://localhost:8080;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+
+<Warning>
+Always use TLS in production. Agents transmit tokens over the network, and the web UI handles authentication credentials.
+</Warning>
+
+## Upgrades
+
+- Pin the Pullbase image (`pullbaseio/pullbase:vX.Y.Z`) and update intentionally.
+- Run `docker compose pull && docker compose up -d` to roll forward.
+- Review release notes for migration changes. Migrations run automatically on startup; monitor logs for SQL errors.
+
+<Tip>
+Back up the Postgres volume before every major upgrade. Use `docker compose exec db pg_dump -U pullbaseuser pullbasedb > backup.sql` or rely on managed backup facilities.
+</Tip>

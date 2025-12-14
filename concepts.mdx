@@ -1,0 +1,97 @@
+---
+title: "Core Concepts"
+description: "Key terminology and mental models for working with Pullbase."
+---
+
+Understanding Pullbase vocabulary helps you map Git content to running infrastructure.
+
+## Environment
+
+A logical grouping of servers that share Git metadata (repository URL, branch, deploy path). Environments are defined in the central server and inherited by every server assigned to them.
+
+- **What it stores:** repository URL, branch, deploy path, the auto-reconcile setting, and optional GitHub App details (installation ID, repository ID, app slug)
+- **When to use it:** group servers by lifecycle stage (dev, staging, prod), region, or customer workload
+
+## Server
+
+Represents a managed node. Each server has a unique ID (`SERVER_ID`), belongs to one environment, and possesses its own status history.
+
+- Agents authenticate as their server using an agent token
+- Pullbase records every reconciliation so you can review drift and error messages later
+- Deleting a server revokes tokens and clears history
+
+## Agent token
+
+A credential generated when you register a server. After creation, it's hashed in the database and only shown once.
+
+- Generate tokens via the UI, CLI, or API
+- Optionally set an expiration and rotate them regularly
+- Required in the `Authorization: Bearer` header for agent endpoints
+- Prefixed with `pbt_` for easy identification
+
+## Desired state (`config.yaml`)
+
+The declarative specification of packages, services, and files for an environment. The agent parses this file and enforces it on the host.
+
+- Supports reload hooks (service restarts) and file permission settings
+- Can reference shared files within the repository using `source` attribute
+- Supports `system` section to override service manager detection
+
+## Drift
+
+Any divergence between desired state and actual state. Agents detect drift during reconciliation and flag it in status updates.
+
+- Drift reasons include missing packages, changed file contents, or disabled services
+- View drift in the web UI or via `GET /api/v1/servers/{id}/status/history`
+- When auto-reconcile is enabled, drift is automatically corrected
+
+## Rollback event
+
+Record of reverting an environment to a previous commit via `POST /api/v1/environments/{id}/rollback`.
+
+- Stores `from_commit`, `to_commit`, `initiated_by`, and `reason`
+- Agents reconcile automatically after the target commit changes
+
+## Bootstrap secret
+
+One-time secret generated on startup (`bootstrap-admin-secret.txt` in the config directory). Allows the first admin to be created without pre-baked credentials.
+
+- Removed automatically after first use
+- Keep it secure and delete any copies once bootstrap is complete
+- Can be provided via `PULLBASE_BOOTSTRAP_SECRET` environment variable
+
+## GitHub App integration
+
+Optional mechanism for private Git repositories. Pullbase uses GitHub Apps to obtain short-lived installation tokens for agents.
+
+- After configuration, the central server signs JWTs to call GitHub's `/app/installations/{id}/access_tokens`
+- Agents never store long-lived credentials
+- Tokens expire after one hour and are refreshed automatically
+
+## Webhook router
+
+Component that receives Git provider webhooks, validates signatures, and updates environment target commits immediately.
+
+- Validates HMAC signatures using `PULLBASE_WEBHOOK_SECRET_KEY`
+- Supports GitHub push events
+- Faster than polling for detecting new commits
+
+## Package manager
+
+The agent auto-detects the system's package manager to install, update, and remove packages:
+
+- **APK** for Alpine Linux
+- **APT** for Debian/Ubuntu
+- **YUM/DNF** for RHEL, CentOS, Rocky Linux, Fedora
+
+## Service manager
+
+The agent auto-detects the init system to manage services:
+
+- **systemd** for most modern Linux distributions
+- **supervisor** for Docker containers or custom setups
+- **OpenRC** for Alpine Linux
+
+Override detection by setting `system.serviceManager` in `config.yaml`.
+
+Keep these concepts in mind as you move through installation and operations—they anchor the terminology used in the CLI, API, and web UI.

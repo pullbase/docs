@@ -1,0 +1,120 @@
+---
+title: "Bootstrapping & Authentication"
+description: "Create the first admin, onboard additional users, and understand Pullbase authentication flows."
+---
+
+Pullbase ships without default credentials. Use the bootstrap secret to create the first administrator, then manage users through the CLI, API, or web UI.
+
+## Bootstrap workflow
+
+<Steps>
+<Step title="Retrieve the bootstrap secret">
+  ```bash
+  docker compose exec pullbase cat /app/config/bootstrap-admin-secret.txt
+  ```
+  <Warning>
+  The secret is single-use. Copy it carefully and avoid storing it in plaintext documents.
+  </Warning>
+</Step>
+
+<Step title="Run the bootstrap command">
+  ```bash
+  docker compose exec pullbase pullbasectl auth bootstrap-admin \
+    --server-url http://localhost:8080 \
+    --bootstrap-secret-file /app/config/bootstrap-admin-secret.txt \
+    --username admin_user \
+    --password 'ChangeMeNow123!'
+  ```
+
+  <Check>
+  The command returns a JSON payload containing a short-lived `access_token`. Test it immediately:
+  
+  ```bash
+  curl -H "Authorization: Bearer ACCESS_TOKEN" \
+    http://localhost:8080/api/v1/auth/me
+  ```
+  </Check>
+</Step>
+
+<Step title="Clean up">
+  The server deletes the bootstrap secret file after a successful bootstrap. Remove any notes or terminals that still display the secret.
+</Step>
+</Steps>
+
+## Bootstrap via environment variable
+
+Alternatively, provide the bootstrap secret via environment variable instead of a file:
+
+```yaml
+environment:
+  PULLBASE_BOOTSTRAP_SECRET: your-secret-here
+```
+
+This is useful in orchestrated environments where mounting files is inconvenient.
+
+## Managing users
+
+### CLI
+
+<CodeGroup>
+```bash Create a user
+pullbasectl users create \
+  --server-url http://localhost:8080 \
+  --admin-token $ADMIN_JWT \
+  --new-username ops_user \
+  --new-password 'StrongPassword!2024' \
+  --role viewer
+```
+
+```bash List users
+pullbasectl users list \
+  --server-url http://localhost:8080 \
+  --admin-token $ADMIN_JWT \
+  --role admin \
+  --limit 50
+```
+</CodeGroup>
+
+<Info>
+To delete a user, call `DELETE /api/v1/users/{userID}` or use the web UI. CLI deletion support is in development.
+</Info>
+
+### Web UI
+
+1. Sign in at `http://localhost:8080` (or your production URL with TLS).
+2. Navigate to **Settings → Users**.
+3. Use **Add user** to provision new operators.
+4. Delete a user by clicking the trash icon and typing the username to confirm.
+
+<Warning>
+Pullbase prevents deleting the last active admin or your own account. Promote another admin before deactivating the original bootstrap user.
+</Warning>
+
+## Authentication model
+
+- **Admins/Users:** Authenticate with username/password. The server issues JWT access tokens signed with `PULLBASE_JWT_SECRET`.
+- **Agents:** Authenticate with agent tokens scoped to a single server. Tokens are hashed at rest and shown only once at creation time. Prefixed with `pbt_`.
+- **GitHub App:** Uses App ID, private key, installation ID, and repository ID to mint short-lived installation tokens for agents.
+
+### Token lifetime
+
+- API tokens expire based on `PULLBASE_JWT_EXPIRY_HOURS` (default 24 hours).
+- Agent tokens can be set to expire (`--expires-in` when creating via CLI) or rotated manually.
+
+### Session management
+
+- The web UI stores the JWT in an HTTP-only cookie.
+- Sign out from the avatar menu or let the token expire naturally.
+- To revoke all sessions, rotate `PULLBASE_JWT_SECRET` and restart Pullbase (forces logout for every user).
+
+## User roles
+
+| Role | Permissions |
+|------|-------------|
+| `admin` | Full access: manage users, environments, servers, tokens |
+| `user` | Manage environments and servers, view users |
+| `viewer` | Read-only access to all resources |
+
+<Tip>
+Capture the bootstrap workflow and admin creation steps in your internal runbooks. In an incident you may need to redeploy Pullbase and bootstrap quickly.
+</Tip>

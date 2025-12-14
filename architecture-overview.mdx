@@ -1,0 +1,117 @@
+---
+title: "Architecture Overview"
+description: "See how the Pullbase server, agents, database, and Git repositories work together."
+---
+
+Pullbase orchestrates Git-driven configuration for traditional servers. Agents pull desired state from the central server, apply it locally, and report the results.
+
+## Components
+
+<CardGroup cols={2}>
+  <Card title="Central server" icon="server">
+    Go application that exposes the REST API, web UI, and webhook endpoints. It manages environments, servers, tokens, audit logs, and status history in PostgreSQL.
+  </Card>
+  <Card title="PostgreSQL" icon="database">
+    Stores configuration and operational data. Database migrations run automatically on startup, and the container includes a seeding command for demo data.
+  </Card>
+  <Card title="Agent" icon="robot">
+    Lightweight binary that authenticates with a scoped token, clones the config repo, reconciles packages/services/files, and reports drift.
+  </Card>
+  <Card title="Git repository" icon="code-branch">
+    Contains `config.yaml` files. Environments point to a repo, branch, and path. Pullbase reads Git to compute the target commit hash.
+  </Card>
+</CardGroup>
+
+## Server internals
+
+- **HTTP stack:** REST APIs with middleware for authentication, CSRF protection, structured logging, and request tracing.
+- **Data access:** PostgreSQL-backed repository layer that stores environments, servers, tokens, rollbacks, users, and audit history.
+- **Git monitor:** Watches repositories for new commits via webhooks or polling and keeps the environment target commit current.
+- **Webhook router:** Validates HMAC signatures, queues events, and updates environment target commits immediately.
+- **Audit logging:** Actions like user creation, token issuance, and rollbacks are persisted for later review.
+
+## Agent internals
+
+The agent is built with pluggable package and service managers:
+
+**Package managers (auto-detected):**
+- APK (Alpine Linux)
+- APT (Debian, Ubuntu)
+- YUM/DNF (RHEL, CentOS, Rocky Linux, Fedora)
+
+**Service managers (auto-detected):**
+- systemd (most modern distributions)
+- supervisor (Docker containers, custom setups)
+- OpenRC (Alpine Linux, Gentoo)
+
+The `system.serviceManager` field in `config.yaml` can override auto-detection when needed.
+
+## Agent workflow
+
+1. Fetch public server info from `GET /api/v1/serverinfo/{serverID}` to get Git configuration.
+2. Authenticate with `AGENT_TOKEN` and fetch full server info via `GET /api/v1/agent/serverinfo`.
+3. Obtain a Git credential via `GET /api/v1/agent/git-token` if the environment uses a GitHub App.
+4. Clone or update the repository under `/etc/pullbase/repo`.
+5. Parse `config.yaml` and reconcile packages, services, and files using the detected managers.
+6. Post a status update to `PUT /api/v1/agent/status`, including commit hash, drift flag, and error messages.
+
+## Data flow overview
+
+```text
+Git commit -> Webhook/polling updates target commit -> Agent polls server info -> Agent applies state -> Agent posts status
+```
+
+- Merging a commit triggers a webhook (or is detected via polling).
+- Pullbase stores the new `deployed_commit` for the environment.
+- Agents poll on a fixed 30-second interval.
+- Agents reconcile to the new commit and report status history entries.
+- Operators review drift, roll back, or adjust configuration via Git.
+
+## Network architecture
+
+```text
+┌─────────────────────────────────────────────────────────────┐
+│                      Internet                                │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│                   Reverse Proxy (TLS)                        │
+│                   NGINX / Traefik / Caddy                    │
+└─────────────────────────────────────────────────────────────┘
+                              │ HTTP (internal)
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│                   Pullbase Server                            │
+│                   (HTTP on port 8080)                        │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│                   PostgreSQL                                 │
+└─────────────────────────────────────────────────────────────┘
+```
+
+<Note>
+Pullbase runs on HTTP internally. For production, always place it behind a reverse proxy that terminates TLS. Agents connect to the TLS endpoint provided by the reverse proxy.
+</Note>
+
+## Scaling considerations
+
+- **Single-node:** Docker Compose deployment with Pullbase and PostgreSQL on one host.
+- **Production:** Run Pullbase behind a reverse proxy/load balancer, store secrets in a manager, and use a managed Postgres service.
+- **High availability:** Run multiple Pullbase replicas behind a load balancer once sessions are JWT-based and stateless. Ensure Postgres is highly available (HA pair or managed service).
+- **Networking:** Agents require outbound HTTPS to the reverse proxy and Git provider. Pullbase requires outbound HTTPS to Git provider (for GitHub Apps and webhooks).
+
+## Rollback mechanics
+
+- Rollbacks (`POST /api/v1/environments/{id}/rollback`) create a record, set the environment's deployed commit to the selected hash, and notify agents on their next poll.
+- Agents revert state to the specified commit. Package downgrades rely on package manager capabilities; test in staging before production rollbacks.
+
+## Observability hooks
+
+- **Logs:** Central server logs are structured (JSON when configured). Agents log reconciliation details at info/debug levels.
+- **Health endpoint:** `/api/v1/healthz` returns status and service name.
+- **Future metrics:** Prometheus metrics are on the roadmap; integrate container logs with your monitoring pipeline meanwhile.
+
+Understanding these components prepares you for installation, environment management, and operational tasks described in subsequent guides.

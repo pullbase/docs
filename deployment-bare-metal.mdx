@@ -1,0 +1,247 @@
+---
+title: "Bare-Metal Deployment"
+description: "Run the Pullbase server and agent directly on VMs or physical hosts."
+---
+
+You can operate Pullbase without containers by compiling the server and agent binaries and managing them with systemd. This gives the agent full access to package managers, init systems, and the filesystem on traditional hosts.
+
+## Prerequisites
+
+- Ubuntu 22.04+, Debian 12, Rocky Linux 9, or a similar systemd-based distribution
+- Go 1.22+ and Node.js 20+ (needed only on the build machine)
+- PostgreSQL 15+ (local or managed service)
+- GNU Make, Git, and `openssl`
+- (Production) Reverse proxy for TLS termination
+
+<Info>
+It is common to build the binaries on a CI runner or a dedicated build VM, then distribute the resulting artifacts to your fleet. The commands below assume you are building on the same host that will run Pullbase.
+</Info>
+
+## Build the server
+
+<Steps>
+<Step title="Clone the repository">
+  ```bash
+  git clone https://github.com/pullbaseio/pullbase.git
+  cd pullbase
+  ```
+</Step>
+
+<Step title="Compile the web UI and server binary">
+  Use the helper script to build the Vite UI and embed it in the Go binary.
+
+  ```bash
+  ./scripts/build-with-ui.sh
+  ```
+
+  <Check>
+  The server binary is written to `bin/pullbase-server`.
+  </Check>
+</Step>
+
+<Step title="Install the binary">
+  ```bash
+  sudo install -m 0755 bin/pullbase-server /usr/local/bin/pullbase-server
+  ```
+</Step>
+</Steps>
+
+## Prepare PostgreSQL
+
+Create a database and user for Pullbase (adapt the host/credentials to your environment):
+
+```bash
+sudo -u postgres psql <<'SQL'
+CREATE ROLE pullbaseuser WITH LOGIN PASSWORD 'change-me';
+CREATE DATABASE pullbasedb OWNER pullbaseuser;
+GRANT ALL PRIVILEGES ON DATABASE pullbasedb TO pullbaseuser;
+SQL
+```
+
+If PostgreSQL runs on another host or a managed service, allow network access from the Pullbase server and enforce TLS according to your security policy.
+
+## Configure environment
+
+Create a directory to hold configuration:
+
+```bash
+sudo mkdir -p /etc/pullbase
+sudo chown $(whoami) /etc/pullbase
+```
+
+Create an environment file with secrets and connection details:
+
+```bash
+cat <<EOF | sudo tee /etc/pullbase/pullbase.env
+# Database configuration
+PULLBASE_DB_HOST=localhost
+PULLBASE_DB_PORT=5432
+PULLBASE_DB_USER=pullbaseuser
+PULLBASE_DB_PASSWORD=change-me
+PULLBASE_DB_NAME=pullbasedb
+PULLBASE_DB_SSLMODE=disable
+
+# Server configuration
+PULLBASE_SERVER_PORT=8080
+PULLBASE_SERVER_HOST=0.0.0.0
+
+# Authentication
+PULLBASE_JWT_SECRET=$(openssl rand -hex 32)
+PULLBASE_JWT_EXPIRY_HOURS=24
+
+# Webhooks
+PULLBASE_WEBHOOK_SECRET_KEY=$(openssl rand -hex 32)
+
+# Git integration (set to true when configuring GitHub App)
+PULLBASE_GIT_ENABLED=false
+PULLBASE_GIT_CLONE_PATH=/var/lib/pullbase/git-repos
+PULLBASE_GIT_POLL_INTERVAL=60
+
+# GitHub App (when using private repos)
+# PULLBASE_GITHUB_APP_ID=your-app-id
+# PULLBASE_GITHUB_APP_PRIVATE_KEY_PATH=/etc/pullbase/github-app.pem
+# PULLBASE_GITHUB_APP_API_BASE_URL=https://api.github.com
+
+# Migrations
+PULLBASE_MIGRATIONS_PATH=file:///var/lib/pullbase/migrations
+EOF
+sudo chmod 600 /etc/pullbase/pullbase.env
+```
+
+<Tip>
+Store long-lived secrets in a vault or parameter store and template this environment file during provisioning.
+</Tip>
+
+## Create a systemd unit
+
+```ini /etc/systemd/system/pullbase.service
+[Unit]
+Description=Pullbase Server
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+EnvironmentFile=/etc/pullbase/pullbase.env
+ExecStart=/usr/local/bin/pullbase-server
+Restart=on-failure
+RestartSec=5
+User=pullbase
+Group=pullbase
+WorkingDirectory=/var/lib/pullbase
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Create the runtime user and data directory:
+
+```bash
+sudo useradd --system --home /var/lib/pullbase --shell /usr/sbin/nologin pullbase
+sudo mkdir -p /var/lib/pullbase/git-repos
+sudo chown -R pullbase:pullbase /var/lib/pullbase
+```
+
+Copy migrations to the expected location:
+
+```bash
+sudo cp -r server/migrations /var/lib/pullbase/
+sudo chown -R pullbase:pullbase /var/lib/pullbase/migrations
+```
+
+Enable and start the service:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now pullbase.service
+sudo systemctl status pullbase.service
+```
+
+<Check>
+Verify the health endpoint: `curl http://localhost:8080/api/v1/healthz`.
+</Check>
+
+## TLS termination
+
+Pullbase runs on HTTP. For production, place it behind a reverse proxy that terminates TLS:
+
+```nginx /etc/nginx/sites-available/pullbase
+server {
+    listen 443 ssl http2;
+    server_name pullbase.example.com;
+    
+    ssl_certificate /etc/ssl/certs/pullbase.crt;
+    ssl_certificate_key /etc/ssl/private/pullbase.key;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    
+    location / {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+
+## Build and install the agent
+
+Follow these steps on every managed server:
+
+<Steps>
+<Step title="Compile the agent">
+  ```bash
+  git clone https://github.com/pullbaseio/pullbase.git
+  cd pullbase/agent
+  go build -o pullbase-agent
+  sudo install -m 0755 pullbase-agent /usr/local/bin/pullbase-agent
+  ```
+</Step>
+<Step title="Create environment file">
+  ```bash
+  sudo mkdir -p /etc/pullbase
+  sudo tee /etc/pullbase/agent.env > /dev/null <<'ENV'
+SERVER_ID=server-01
+CENTRAL_SERVER_URL=https://pullbase.example.com
+AGENT_TOKEN=pbt_...
+CACERT_PATH=/etc/pullbase/ca.crt
+SKIP_TLS_VERIFY=false
+ENV
+sudo chmod 600 /etc/pullbase/agent.env
+```
+</Step>
+<Step title="Install systemd unit">
+  ```ini /etc/systemd/system/pullbase-agent.service
+[Unit]
+Description=Pullbase Agent
+After=network-online.target
+
+[Service]
+EnvironmentFile=/etc/pullbase/agent.env
+ExecStart=/usr/local/bin/pullbase-agent
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+  ```
+
+  ```bash
+  sudo systemctl daemon-reload
+  sudo systemctl enable --now pullbase-agent.service
+  sudo systemctl status pullbase-agent.service
+  ```
+</Step>
+</Steps>
+
+Refer to [Agent Operations](/agent-operations) for troubleshooting, logging, and advanced configuration.
+
+## Next steps
+
+- [Bootstrap your first admin](/bootstrapping) using the generated secret.
+- [Integrate a GitHub App](/github-app-integration) if you pull from private repositories.
+- Review [Security & Hardening](/security-hardening) to lock down secrets, TLS, and network access.
+
+<Warning>
+Until formal release artifacts are published, you must build the server and agent binaries yourself. Plan a repeatable build process (CI pipeline or signed artifacts) before rolling Pullbase to production.
+</Warning>

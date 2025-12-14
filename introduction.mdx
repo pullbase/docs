@@ -1,0 +1,24 @@
+---
+title: "Welcome to Pullbase"
+description: "Learn what Pullbase is and how it enables GitOps for servers."
+---
+
+Pullbase delivers an Argo CD–inspired GitOps workflow for traditional servers. Operators define the desired state of packages, services, and files in Git, while the Pullbase agent continuously reconciles that state on each node.
+
+## Why Pullbase
+
+- **Git as the source of truth:** Track every configuration change with version control.
+- **Pull-based reconciliation:** Agents fetch desired state, eliminating firewall headaches and reducing blast radius.
+- **Environment-driven design:** Group servers, inherit configuration from environments, and roll back with confidence.
+- **Unified toolchain:** Central server, UI, CLI, and API work together for onboarding, operations, and automation.
+
+## How these docs are organized
+
+- **Foundations** explains architecture, concepts, and terminology.
+- **Setup** walks you through installation, bootstrapping, and GitHub App integration.
+- **Operations** covers day-to-day management of environments, agents, and the configuration repository.
+- **Reference** documents the CLI and API for automation workflows.
+
+<Info>
+All examples use the Docker image `pullbaseio/pullbase`. If you are running from source, adapt commands for your environment. For production deployments, place Pullbase behind a reverse proxy that terminates TLS.
+</Info>

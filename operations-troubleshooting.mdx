@@ -1,0 +1,135 @@
+---
+title: "Operations & Troubleshooting"
+description: "Keep Pullbase healthy and resolve common issues quickly."
+---
+
+Operating Pullbase involves monitoring service health, responding to drift, and collecting diagnostics during incidents.
+
+## Health checks
+
+- **API health:** `curl http://localhost:8080/api/v1/healthz`
+- **Database:** `docker compose exec db pg_isready -U pullbaseuser -d pullbasedb`
+- **Web UI:** Sign in and confirm the dashboard loads recent activity.
+- **Agents:** List servers and check `last_timestamp` in status history via CLI or UI.
+
+## Routine operations checklist
+
+<CardGroup cols={2}>
+  <Card title="Daily" icon="calendar">
+    - Review drift alerts from status history
+    - Check audit logs for unexpected actions
+    - Ensure webhooks (if enabled) are succeeding
+  </Card>
+  <Card title="Weekly" icon="rotate">
+    - Rotate admin tokens or ensure expiration dates are set
+    - Back up the PostgreSQL database
+    - Verify TLS certificates (at reverse proxy) aren't approaching expiry
+  </Card>
+  <Card title="Monthly" icon="shield-halved">
+    - Test agent token rotation on a sample server
+    - Exercise rollback on a staging environment
+    - Review GitHub App access scopes
+  </Card>
+  <Card title="Quarterly" icon="file-signature">
+    - Run disaster recovery drill (bootstrap new server + restore DB)
+    - Patch base OS/images used for agents and central server hosts
+  </Card>
+</CardGroup>
+
+## Troubleshooting guide
+
+<AccordionGroup>
+  <Accordion title="Bootstrap secret already used">
+    - Delete `bootstrap-admin-secret.txt` inside the config directory and restart to regenerate.
+    - Or provide a new secret via `PULLBASE_BOOTSTRAP_SECRET` environment variable.
+    - Create a new admin via CLI if another admin exists: `pullbasectl users create`
+  </Accordion>
+
+  <Accordion title="Agents reporting 401 Unauthorized">
+    - Token revoked? Generate a new token and update the deployment.
+    - Clock skew? Ensure NTP is running—JWT validation is time-sensitive.
+    - Incorrect `SERVER_ID`? Confirm environment variable matches the server record.
+  </Accordion>
+
+  <Accordion title="Git clone failures">
+    - Check outbound network connectivity to the Git provider.
+    - For GitHub Apps, verify installation scopes and ensure the private key matches the app.
+    - Confirm agents trust the TLS certificate (`CACERT_PATH` points to the CA bundle).
+  </Accordion>
+
+  <Accordion title="Service manager not detected">
+    - Override auto-detection by setting `system.serviceManager` in `config.yaml`.
+    - For Docker containers, use `supervisor` as the service manager.
+    - Ensure service manager commands are in the agent's PATH.
+  </Accordion>
+
+  <Accordion title="Database migration errors">
+    - Review container logs around startup for SQL errors.
+    - Migrations run automatically; check for schema drift caused by manual database edits.
+    - Restore from backup if migrations fail due to corruption.
+  </Accordion>
+
+  <Accordion title="Webhook retries failing">
+    - Inspect container logs: `docker compose logs pullbase`
+    - Ensure the webhook secret in GitHub matches `PULLBASE_WEBHOOK_SECRET_KEY`.
+    - Confirm Pullbase is reachable from your Git provider (network ACLs, firewalls).
+  </Accordion>
+</AccordionGroup>
+
+## Collect diagnostics
+
+```bash
+# Pullbase server logs
+docker compose logs pullbase --since 1h
+
+# Database logs
+docker compose logs db --since 1h
+
+# Agent logs (container)
+docker logs pullbase-agent --since 1h
+
+# Agent logs (systemd)
+journalctl -u pullbase-agent --since "1 hour ago"
+```
+
+<Steps>
+<Step title="Export environment metadata">
+  ```bash
+  curl -H "Authorization: Bearer $ADMIN_TOKEN" \
+    http://localhost:8080/api/v1/environments
+  ```
+</Step>
+<Step title="Export server status history">
+  ```bash
+  curl -H "Authorization: Bearer $ADMIN_TOKEN" \
+    http://localhost:8080/api/v1/servers/web-01/status/history
+  ```
+</Step>
+<Step title="Capture database snapshot">
+  ```bash
+  docker compose exec db \
+    pg_dump -U pullbaseuser pullbasedb \
+    > pullbasedb-$(date +%F).sql
+  ```
+</Step>
+</Steps>
+
+## Resetting the installation
+
+If you need a clean slate (lab environments):
+
+1. Stop services: `docker compose down`
+2. Remove volumes **only if you accept data loss**: `docker volume rm pullbase_postgres_data`
+3. Start again: `docker compose up -d`
+
+<Warning>
+Removing the database volume wipes environments, servers, tokens, and audit history. Always back up before destructive operations.
+</Warning>
+
+## Getting help
+
+- Review [GitHub issues](https://github.com/pullbaseio/pullbase/issues) for known bugs.
+- Collect the diagnostic bundle above before filing a bug report.
+- Provide Pullbase version and deployment details.
+
+Keep this playbook handy so you can respond quickly when drift occurs or when an agent experiences connectivity issues.
