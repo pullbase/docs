@@ -26,6 +26,8 @@
             "group": "Setup",
             "pages": [
               "installation",
+              "deployment-container",
+              "deployment-bare-metal",
               "bootstrapping",
               "github-app-integration",
               "configuration-repository"
@@ -62,13 +64,6 @@
       }
     ],
     "global": {
-      "anchors": [
-        {
-          "anchor": "Pullbase Website",
-          "href": "https://pullbase.io",
-          "icon": "globe"
-        }
-      ]
     }
   },
   "logo": {

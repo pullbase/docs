@@ -3,11 +3,89 @@ title: "API Reference"
 description: "REST API endpoints for the Pullbase server."
 ---
 
-All endpoints require HTTPS. Admin and viewer accounts authenticate with bearer tokens, while agents use their agent token.
+All endpoints are served over HTTP (use a reverse proxy for TLS in production). Admin and viewer accounts authenticate with bearer tokens, while agents use their agent token.
 
 <BaseUrl>
-https://pullbase.example.com/api/v1
+http://pullbase.example.com/api/v1
 </BaseUrl>
+
+## Public endpoints
+
+These endpoints do not require authentication.
+
+### `GET /healthz`
+
+Returns the server health status.
+
+<ResponseExample>
+```json Success
+{
+  "status": "healthy",
+  "service": "pullbase-server"
+}
+```
+</ResponseExample>
+
+### `GET /serverinfo/{serverID}`
+
+Returns Git configuration for a server. Used by agents during initial bootstrap to fetch repository details before authenticating.
+
+<ParamField path="serverID" type="string" required>
+Server identifier.
+</ParamField>
+
+<ResponseExample>
+```json Success
+{
+  "repo_url": "https://github.com/your-org/configs.git",
+  "branch": "main",
+  "deploy_path": "environments/staging/config.yaml",
+  "target_commit_hash": "8a9d3c...",
+  "auto_reconcile": true
+}
+```
+</ResponseExample>
+
+### `GET /bootstrap/status`
+
+Returns whether bootstrap is available (first admin not yet created).
+
+<ResponseExample>
+```json Success
+{
+  "bootstrap_available": true
+}
+```
+</ResponseExample>
+
+### `POST /bootstrap/admin`
+
+Creates the first admin user using the bootstrap secret.
+
+<RequestExample>
+```bash cURL
+curl -X POST $BASE_URL/bootstrap/admin \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "bootstrap_secret": "secret-from-file",
+    "username": "admin_user",
+    "password": "ChangeMeNow123!"
+  }'
+```
+</RequestExample>
+
+<ResponseExample>
+```json Success
+{
+  "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "user": {
+    "id": 1,
+    "username": "admin_user",
+    "role": "admin"
+  }
+}
+```
+</ResponseExample>
 
 ## Authentication
 
@@ -15,7 +93,7 @@ https://pullbase.example.com/api/v1
 
 <RequestExample>
 ```bash cURL
-curl -k -X POST $BASE_URL/auth/login \
+curl -X POST $BASE_URL/auth/login \
   -H 'Content-Type: application/json' \
   -d '{
     "username": "admin_user",
@@ -41,6 +119,16 @@ curl -k -X POST $BASE_URL/auth/login \
 
 Returns the authenticated user. Requires `Authorization: Bearer <token>`.
 
+<ResponseExample>
+```json Success
+{
+  "id": 1,
+  "username": "admin_user",
+  "role": "admin"
+}
+```
+</ResponseExample>
+
 ## Environments
 
 ### `GET /environments`
@@ -54,7 +142,9 @@ Returns the authenticated user. Requires `Authorization: Bearer <token>`.
     "repo_url": "https://github.com/your-org/configs.git",
     "branch": "main",
     "deploy_path": "environments/staging/config.yaml",
-    "auto_reconcile": true
+    "auto_reconcile": true,
+    "status": "active",
+    "deployed_commit": "8a9d3c..."
   }
 ]
 ```
@@ -64,7 +154,7 @@ Returns the authenticated user. Requires `Authorization: Bearer <token>`.
 
 <RequestExample>
 ```bash cURL
-curl -k -X POST $BASE_URL/environments \
+curl -X POST $BASE_URL/environments \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{
@@ -74,7 +164,6 @@ curl -k -X POST $BASE_URL/environments \
     "branch": "main",
     "deploy_path": "environments/staging/config.yaml",
     "github_app": {
-      "app_id": 2113565,
       "installation_id": 89968159,
       "repository_id": 964854370,
       "app_slug": "pullbase-config"
@@ -94,9 +183,47 @@ curl -k -X POST $BASE_URL/environments \
 ```
 </ResponseExample>
 
+### `GET /environments/{environmentID}`
+
+Returns a single environment by ID.
+
+### `PUT /environments/{environmentID}`
+
+Updates an environment.
+
+### `DELETE /environments/{environmentID}`
+
 <Warning>
-Deleting an environment (`DELETE /environments/{id}`) cascades to servers in that environment. De-register servers first if you want a clean transition.
+Deleting an environment cascades to servers in that environment. De-register servers first if you want a clean transition.
 </Warning>
+
+### `POST /environments/{environmentID}/toggle-auto-reconcile`
+
+Toggles the auto-reconcile setting for an environment.
+
+### `POST /environments/{id}/rollback`
+
+Initiates a rollback to a previous commit.
+
+<RequestExample>
+```bash cURL
+curl -X POST $BASE_URL/environments/5/rollback \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "to_commit": "8a9d3cba2f...",
+    "reason": "Reverting faulty nginx config"
+  }'
+```
+</RequestExample>
+
+### `GET /environments/{id}/rollbacks`
+
+Lists rollback events for an environment.
+
+### `GET /environments/{id}/commits`
+
+Returns available commits for rollback selection.
 
 ## Servers
 
@@ -104,7 +231,7 @@ Deleting an environment (`DELETE /environments/{id}`) cascades to servers in tha
 
 <RequestExample>
 ```bash cURL
-curl -k -X POST $BASE_URL/servers \
+curl -X POST $BASE_URL/servers \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{
@@ -126,21 +253,45 @@ curl -k -X POST $BASE_URL/servers \
   "token": "pbt_9BFz...",
   "installation_info": {
     "instructions": "Configure AGENT_TOKEN with this value when deploying the agent.",
-    "example_cmd": "docker run --rm pullbaseio/pullbase-agent:latest --token pbt_9BFz..."
+    "example_cmd": "docker run --rm pullbaseio/pullbase-agent:latest"
   }
 }
 ```
 </ResponseExample>
 
-### `GET /servers/{id}/status/history`
+### `GET /servers`
+
+Lists all servers with their latest status.
+
+### `GET /servers/{serverID}`
+
+Returns a single server by ID.
+
+### `PUT /servers/{serverID}`
+
+Updates a server.
+
+### `DELETE /servers/{serverID}`
+
+Deletes a server, revoking its tokens and clearing status history.
+
+### `POST /servers/{serverID}/toggle-auto-reconcile`
+
+Toggles auto-reconcile for a server.
+
+### `GET /servers/{serverID}/status/history`
 
 Returns chronological status entries including commit hash, drift flag, and timestamp.
 
-### Token endpoints
+### Token management
 
-- `GET /servers/{id}/tokens` – list tokens
-- `POST /servers/{id}/tokens` – create token (`description`, `expires_in_days`)
-- `DELETE /servers/{id}/tokens/{tokenID}` – deactivate token
+- `GET /servers/{serverID}/tokens` – list tokens
+- `POST /servers/{serverID}/tokens` – create token (`description`, `expires_in`)
+- `DELETE /servers/{serverID}/tokens/{tokenID}` – deactivate token
+
+### `GET /servers/{serverID}/install`
+
+Returns installation instructions for the agent.
 
 ## User management
 
@@ -151,12 +302,18 @@ Supports pagination and role filtering.
 <ParamField query="limit" type="integer" default="100">
 Maximum number of users per page (1–500).
 </ParamField>
+<ParamField query="offset" type="integer" default="0">
+Pagination offset.
+</ParamField>
+<ParamField query="role" type="string">
+Filter by role (`admin`, `user`, `viewer`).
+</ParamField>
 
 ### `POST /users`
 
 <RequestExample>
 ```bash cURL
-curl -k -X POST $BASE_URL/users \
+curl -X POST $BASE_URL/users \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{
@@ -171,24 +328,20 @@ curl -k -X POST $BASE_URL/users \
 
 <RequestExample>
 ```bash cURL
-curl -k -X DELETE $BASE_URL/users/7 \
+curl -X DELETE $BASE_URL/users/7 \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{ "confirm_username": "ops_user" }'
 ```
 </RequestExample>
 
-<ResponseExample>
-```json Success
-{}
-```
-</ResponseExample>
-
 ## Agent endpoints
+
+These endpoints require agent token authentication (`Authorization: Bearer <agent_token>`).
 
 ### `GET /agent/serverinfo`
 
-Agents call this endpoint with their agent token.
+Returns Git configuration and target commit for the authenticated agent's server.
 
 <ResponseExample>
 ```json Success
@@ -206,11 +359,26 @@ Agents call this endpoint with their agent token.
 
 Returns a short-lived GitHub installation token when the environment uses a GitHub App.
 
+<ResponseExample>
+```json Success
+{
+  "token": "ghs_...",
+  "expires_at": "2025-01-15T13:34:56Z",
+  "repo_url": "https://github.com/your-org/configs.git",
+  "provider": "github",
+  "installation_id": 89968159,
+  "authentication": "github_app"
+}
+```
+</ResponseExample>
+
 ### `PUT /agent/status`
+
+Reports agent status to the server.
 
 <RequestExample>
 ```bash cURL
-curl -k -X PUT $BASE_URL/agent/status \
+curl -X PUT $BASE_URL/agent/status \
   -H "Authorization: Bearer $AGENT_TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{
@@ -222,14 +390,23 @@ curl -k -X PUT $BASE_URL/agent/status \
 ```
 </RequestExample>
 
+## Webhooks
+
+### `POST /webhooks/{provider}`
+
+Receives webhooks from Git providers. Currently supports `github`.
+
+The webhook payload is validated using HMAC signature verification with `PULLBASE_WEBHOOK_SECRET_KEY`.
+
 ## Error handling
 
 - `400 Bad Request` – validation failure (details in the `error` field)
 - `401 Unauthorized` – missing or invalid token
 - `403 Forbidden` – caller lacks the required role (for example, viewer attempting an admin action)
 - `404 Not Found` – resource does not exist or has been deleted
+- `429 Too Many Requests` – rate limited (check `Retry-After` header)
 - `500 Internal Server Error` – unexpected server error (check server logs)
 
 <Tip>
-Use `-k` during local testing with self-signed certificates. In production, run `curl` with your CA bundle: `curl --cacert /path/to/ca.crt ...`.
+For production, always use HTTPS via a reverse proxy. The examples above use HTTP for clarity.
 </Tip>

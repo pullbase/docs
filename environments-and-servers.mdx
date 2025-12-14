@@ -1,12 +1,145 @@
 ---
 title: "Managing Environments & Servers"
-description: "Create environments, register servers, and manage agent tokens."
+description: "Create environments, register servers, and manage agent tokens in Pullbase."
 ---
 
-<Info>
-This page is being drafted. Check back soon for complete guidance.
-</Info>
+Environments and servers are the core records managed by the central server. This page covers lifecycle actions through the UI, CLI, and API.
 
-## Overview
+## Environments
 
-Content coming soon.
+Each environment links a Git repository to a Pullbase deployment target.
+
+### Create via web UI
+
+<Steps>
+<Step title="Open Environments">
+  Sign in and choose **Environments** from the sidebar.
+</Step>
+<Step title="Click New Environment">
+  Provide a name (for example, `staging`) and optional description.
+</Step>
+<Step title="Configure Git">
+  - Repository URL: `https://github.com/your-org/configs.git`
+  - Branch: `main`
+  - Deploy path: `environments/staging/config.yaml`
+  - Auto-reconcile: enabled by default
+</Step>
+<Step title="Optional: GitHub App">
+  Supply installation ID, repository ID, and app slug if the repo is private.
+</Step>
+</Steps>
+
+<Check>
+After saving, the environment appears in the list. If webhooks are configured, Pullbase receives push events; otherwise it polls periodically.
+</Check>
+
+### Create via API
+
+<RequestExample>
+```bash cURL
+curl -X POST http://localhost:8080/api/v1/environments \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "name": "staging",
+    "description": "staging web tier",
+    "repo_url": "https://github.com/your-org/configs.git",
+    "branch": "main",
+    "deploy_path": "environments/staging/config.yaml",
+    "auto_reconcile": true
+  }'
+```
+</RequestExample>
+
+## Servers
+
+Servers represent managed nodes (VMs, bare-metal hosts, or containers) that run the Pullbase agent.
+
+### Register via API
+
+```bash
+curl -X POST http://localhost:8080/api/v1/servers \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "id": "web-01",
+    "name": "staging-web-01",
+    "environment_id": 5
+  }'
+```
+
+The response includes an agent token. Store it securely and set `AGENT_TOKEN` for the agent deployment.
+
+### List servers and status
+
+```bash
+curl -H "Authorization: Bearer $ADMIN_TOKEN" \
+  http://localhost:8080/api/v1/servers
+```
+
+### Remove a server
+
+<RequestExample>
+```bash cURL
+curl -X DELETE http://localhost:8080/api/v1/servers/web-01 \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+</RequestExample>
+
+Deleting a server revokes its tokens and clears status history.
+
+## Agent tokens
+
+Tokens authenticate agents; each server can have multiple active tokens for rotation.
+
+### Token management via CLI
+
+- **List:** `pullbasectl tokens list --server-url http://localhost:8080 --admin-token $ADMIN_JWT --server-id web-01`
+- **Create:** `pullbasectl tokens create --server-url http://localhost:8080 --admin-token $ADMIN_JWT --server-id web-01 --description "blue-green" --expires-in 30`
+- **Revoke:** `pullbasectl tokens revoke --server-url http://localhost:8080 --admin-token $ADMIN_JWT --server-id web-01 --token-id 17`
+
+### Token fields
+
+| Field | Description |
+|-------|-------------|
+| `id` | Token identifier used for revocation |
+| `description` | Free-form label ("staging deployment", "ansible integration") |
+| `expires_at` | Expiration timestamp (optional) |
+| `is_active` | Indicates whether the token can be used |
+| `last_used_at` | Last time the token was used for authentication |
+
+## Automatic vs manual reconciliation
+
+- **Auto-reconcile enabled:** Pullbase notifies agents of new commits. Agents reconcile on their next poll automatically.
+- **Auto-reconcile disabled:** Pullbase records the new commit, but agents observe without applying changes until auto-reconcile is re-enabled.
+
+Toggle auto-reconcile via the UI or API (`POST /api/v1/environments/{id}/toggle-auto-reconcile`).
+
+## Rollbacks
+
+Rollback from the environment detail page or via `POST /api/v1/environments/{id}/rollback`:
+
+<RequestExample>
+```bash cURL
+curl -X POST http://localhost:8080/api/v1/environments/5/rollback \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "to_commit": "8a9d3cba2f...",
+    "reason": "Reverting faulty nginx config"
+  }'
+```
+</RequestExample>
+
+Pullbase creates a rollback event and updates the target commit. Agents reconcile to the specified commit on their next poll.
+
+## Best practices
+
+- Use descriptive `server_id` values (for example, `prod-api-01`) to simplify searches.
+- Rotate agent tokens regularly; maintain at least two active tokens during rotation to avoid downtime.
+- Keep environment branches protected and enforce pull-request reviews.
+- Tag production commits so rollbacks are easy to target.
+
+<Tip>
+Store environment metadata (repo URL, branch, deploy path) in a configuration management repo to reproduce Pullbase configuration declaratively.
+</Tip>

@@ -1,12 +1,98 @@
 ---
 title: "Security & Hardening"
-description: "Security considerations and hardening guidance for production."
+description: "Secure secrets, TLS, and operational access before running Pullbase in production."
 ---
 
-<Info>
-This page is being drafted. Check back soon for complete guidance.
-</Info>
+Pullbase manages critical infrastructure. Follow these guidelines to reduce risk when operating at scale.
 
-## Overview
+## Secret management
 
-Content coming soon.
+- Store `PULLBASE_JWT_SECRET`, `PULLBASE_WEBHOOK_SECRET_KEY`, and database credentials in your secret manager (AWS Secrets Manager, HashiCorp Vault, etc.). Inject them into Docker at runtime rather than committing them to disk.
+- Mount GitHub App private keys from a read-only path (`/config/github-app.pem`) and restrict filesystem permissions so only the Pullbase container can read them.
+- Rotate agent tokens regularly. Tokens are hashed at rest, but compromised tokens allow full configuration access for that server.
+- Use unique credentials per environment when possible.
+
+## TLS termination
+
+Pullbase runs on HTTP internally. For production:
+
+- Deploy a reverse proxy (NGINX, Traefik, Caddy, or cloud load balancer) in front of Pullbase.
+- Terminate TLS at the reverse proxy using CA-signed certificates.
+- Ensure agents connect to the HTTPS endpoint, not the internal HTTP port.
+- Distribute the CA chain to agents if using internal PKI.
+
+```nginx
+# Example: NGINX TLS termination
+server {
+    listen 443 ssl http2;
+    server_name pullbase.example.com;
+    
+    ssl_certificate /etc/ssl/certs/pullbase.crt;
+    ssl_certificate_key /etc/ssl/private/pullbase.key;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256;
+    
+    location / {
+        proxy_pass http://localhost:8080;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+
+<Warning>
+Never expose the internal HTTP port directly to the internet. Agent tokens and user credentials are transmitted in requests.
+</Warning>
+
+## Agent TLS verification
+
+Agents validate the TLS certificate of the Pullbase server:
+
+- Set `CACERT_PATH` to a CA bundle that trusts your certificate.
+- Never enable `SKIP_TLS_VERIFY=true` in production—it disables certificate validation.
+- Keep CA bundles up to date across your fleet.
+
+## Access control
+
+- Create dedicated viewer accounts for read-only dashboards and audits.
+- Enforce strong passwords (12+ characters with complexity) and rotate admin credentials periodically.
+- Restrict CLI usage to secure workstations. Store admin tokens in environment variables only temporarily.
+- Monitor audit logs (stored in the `audit_log` table) for suspicious activity. Integrate with your SIEM by streaming logs from the container.
+
+## Database hardening
+
+- Enable TLS connections between Pullbase and PostgreSQL. Set `PULLBASE_DB_SSLMODE=require` or `PULLBASE_DB_SSLMODE=verify-full`.
+- Grant Pullbase a least-privilege Postgres role (ownership of the `pullbasedb` database only).
+- Schedule automated backups and test restore procedures. Without the database, you lose environment definitions, tokens, and drift history.
+
+## Network segmentation
+
+- Place Pullbase in a private subnet behind a load balancer. Expose only port 443 (TLS) via the reverse proxy.
+- Allow outbound connections only to required destinations: your Git provider, webhook endpoints, and package repositories.
+- Restrict inbound traffic between agents and Pullbase using security groups or firewall rules.
+
+## Agent security
+
+- Run agents with minimal privileges. Grant access only to files and services defined in `config.yaml`.
+- For containerized agents, carefully consider host filesystem mounts—they effectively grant root access.
+- Rotate agent tokens regularly. Create a new token, update the agent, then revoke the old token.
+- Monitor agent status for unexpected disconnections or authentication failures.
+
+## Logging & monitoring
+
+- Forward container logs to your log aggregation platform.
+- Collect agent logs (especially when running as systemd units) for drift diagnostics.
+- Monitor GitHub App rate limits and webhook delivery failures; increasing poll intervals or adjusting webhook retries can prevent throttling.
+- Consider adding synthetic checks that call `/api/v1/healthz` to detect API regressions.
+
+## Upgrades and patching
+
+- Pin Pullbase and agent images (`pullbaseio/pullbase:vX.Y.Z`) to avoid unintended upgrades.
+- Review release notes (GitHub Releases) and test upgrades in staging. Watch migration logs closely.
+- Apply OS patches to hosts running agents—Pullbase focuses on desired state, not OS patch management.
+
+<Tip>
+Document your disaster recovery plan: bootstrap steps, database restore procedures, certificate replacement, and token rotation. Regular tabletop exercises help ensure you can rebuild Pullbase quickly if needed.
+</Tip>

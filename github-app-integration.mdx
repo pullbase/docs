@@ -1,12 +1,139 @@
 ---
 title: "GitHub App Integration"
-description: "Connect Pullbase to GitHub App installations for private repositories."
+description: "Connect Pullbase to private Git repositories using a GitHub App."
 ---
 
-<Info>
-This page is being drafted. Check back soon for complete guidance.
-</Info>
+Pullbase supports GitHub Apps to securely access private repositories without embedding personal access tokens.
 
-## Overview
+## When to use a GitHub App
 
-Content coming soon.
+- Your configuration repository is private.
+- You need auditable, revokable permissions scoped to specific repositories.
+- You want Pullbase to fetch short-lived installation tokens on behalf of agents.
+
+<Tip>
+You can start with public repositories (set `PULLBASE_GIT_ENABLED=false`). Add a GitHub App once you move configuration to a private repository.
+</Tip>
+
+## Create the GitHub App
+
+<Steps>
+<Step title="Register the app">
+  1. Visit [https://github.com/settings/apps/new](https://github.com/settings/apps/new) (or the equivalent GitHub Enterprise URL).
+  2. Provide a descriptive **App name** (for example, `Pullbase Config App`).
+  3. Set the **Homepage URL** to your Pullbase instance (`https://pullbase.example.com`).
+  4. Set the **Callback URL** to `https://pullbase.example.com/api/v1/github-app/callback` (reserved for future enhancements).
+  5. Leave the **Webhook** section disabled unless you plan to handle app-level webhooks separately.
+</Step>
+
+<Step title="Configure permissions">
+  Grant only the permissions required:
+
+  - Repository permissions → **Contents: Read-only**
+  - Repository permissions → **Metadata: Read-only**
+  - All other permissions: **No access**
+
+  <Info>
+  Pullbase only needs read access to fetch configuration files. Additional permissions are unnecessary and increase risk.
+  </Info>
+</Step>
+
+<Step title="Install the app">
+  Install the app on the organization/user that owns your configuration repository. Select the repositories Pullbase should access.
+</Step>
+
+<Step title="Capture credentials">
+  After installation, record:
+
+  - **App ID**
+  - **App slug** (lowercase name of the app)
+  - **Installation ID** (per repository or organization)
+  - **Repository ID** (view via GitHub REST API: `GET /repos/{owner}/{repo}`)
+  - Download the **private key** (`.pem`)
+</Step>
+</Steps>
+
+## Configure Pullbase
+
+### Environment variables
+
+```env
+PULLBASE_GIT_ENABLED=true
+PULLBASE_GITHUB_APP_ID=2113565
+PULLBASE_GITHUB_APP_PRIVATE_KEY_PATH=/config/github-app.pem
+PULLBASE_GITHUB_APP_API_BASE_URL=https://api.github.com
+```
+
+Mount the private key into the container at the configured path:
+
+```yaml
+volumes:
+  - ./config/github-app.pem:/config/github-app.pem:ro
+```
+
+### Environment-level configuration
+
+When creating an environment (UI, CLI, or API) you provide GitHub App metadata:
+
+```json
+{
+  "name": "staging",
+  "repo_url": "https://github.com/your-org/configs.git",
+  "branch": "main",
+  "deploy_path": "environments/staging/config.yaml",
+  "installation_id": 89968159,
+  "repository_id": 964854370,
+  "app_slug": "pullbase-config"
+}
+```
+
+## CLI validation
+
+Use the bootstrap command to validate credentials locally before storing them on the server:
+
+```bash
+pullbasectl github-app bootstrap \
+  --app-id 2113565 \
+  --private-key /config/github-app.pem \
+  --installation-id 89968159 \
+  --repository-id 964854370 \
+  --app-slug pullbase-config
+```
+
+Add `--server-url`, `--admin-token`, and environment details to persist the configuration as part of environment creation.
+
+## Agent flow
+
+1. The environment stores GitHub App metadata (installation ID, repository ID, app slug).
+2. An agent requests `GET /api/v1/agent/git-token` using its agent token.
+3. Pullbase signs a JWT with the app's private key and calls GitHub's `/app/installations/{id}/access_tokens` endpoint.
+4. Pullbase returns the short-lived installation token to the agent, which uses it for `git clone`.
+5. Tokens expire in one hour; agents request fresh ones as needed.
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="403 when cloning">
+    - Verify the installation includes the repository. Check [https://github.com/settings/installations](https://github.com/settings/installations) for the app.
+    - Confirm the app has `Contents: Read-only` permission.
+  </Accordion>
+  <Accordion title="Invalid private key">
+    - Regenerate the `.pem` file from the GitHub App settings and update the mounted secret.
+    - Ensure the file has restricted permissions (readable only by the Pullbase container).
+  </Accordion>
+  <Accordion title="Rate limiting">
+    - GitHub Apps share a rate limit per installation. Reduce agent poll interval or enable webhooks to decrease token requests.
+    - Check `Retry-After` headers in error responses.
+  </Accordion>
+  <Accordion title="Webhook signature mismatch">
+    - Ensure the webhook secret in GitHub matches `PULLBASE_WEBHOOK_SECRET_KEY`.
+  </Accordion>
+</AccordionGroup>
+
+<Tip>
+Use the GitHub CLI to inspect installation details:
+
+```bash
+gh api /app/installations --jq '.[].id'
+```
+</Tip>

@@ -10,6 +10,28 @@ description: "Command reference for the pullbasectl utility."
 alias pullbasectl='docker run --rm pullbaseio/pullbase:latest pullbasectl'
 ```
 
+## Global options
+
+These options are available on most commands:
+
+| Flag | Description |
+|------|-------------|
+| `--server-url` | Pullbase server base URL (e.g., `http://localhost:8080`) |
+| `--admin-token` | Admin JWT token for authentication |
+| `--username` | Admin username (alternative to `--admin-token`) |
+| `--password` | Admin password (use with `--username`) |
+| `--password-file` | Path to file containing admin password |
+| `--ca-cert` | Path to CA certificate bundle for TLS verification |
+| `--insecure-skip-verify` | Skip TLS certificate verification (not recommended) |
+
+<Tip>
+Set the environment variable `PULLBASE_ADMIN_TOKEN` to avoid repeating `--admin-token` on every command:
+
+```bash
+export PULLBASE_ADMIN_TOKEN=$(pullbasectl auth login ... | jq -r '.access_token')
+```
+</Tip>
+
 ## Authentication commands
 
 ### `pullbasectl auth bootstrap-admin`
@@ -17,7 +39,7 @@ alias pullbasectl='docker run --rm pullbaseio/pullbase:latest pullbasectl'
 Initializes the first admin using the one-time bootstrap secret.
 
 <ParamField flag="--server-url" type="string" required>
-URL of the Pullbase API (HTTPS).
+URL of the Pullbase API.
 </ParamField>
 <ParamField flag="--bootstrap-secret" type="string">
 Secret value provided by the container. Mutually exclusive with `--bootstrap-secret-file`.
@@ -26,7 +48,7 @@ Secret value provided by the container. Mutually exclusive with `--bootstrap-sec
 Path to a file containing the bootstrap secret. Use when running inside a container.
 </ParamField>
 <ParamField flag="--username" type="string" required>
-Username for the new admin.
+Username for the new admin (3-64 characters, alphanumeric with `.`, `_`, `-`).
 </ParamField>
 <ParamField flag="--password" type="string" required>
 Password for the new admin (minimum 12 characters).
@@ -35,19 +57,19 @@ Password for the new admin (minimum 12 characters).
 <RequestExample>
 ```bash
 pullbasectl auth bootstrap-admin \
-  --server-url https://localhost:8080 \
-  --bootstrap-secret-file /tmp/bootstrap.txt \
+  --server-url http://localhost:8080 \
+  --bootstrap-secret-file /app/config/bootstrap-admin-secret.txt \
   --username admin_user \
   --password 'ChangeMeNow123!'
 ```
 </RequestExample>
 
 <ResponseExample>
-```json Success
-{
-  "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-  "user": { "id": 1, "username": "admin_user", "role": "admin" }
-}
+```text
+Admin bootstrap completed successfully.
+Username: admin_user
+Access token (store securely):
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 ```
 </ResponseExample>
 
@@ -57,7 +79,7 @@ Exchange a username and password for an admin JWT.
 
 ```bash
 pullbasectl auth login \
-  --server-url https://localhost:8080 \
+  --server-url http://localhost:8080 \
   --username admin_user \
   --password 'ChangeMeNow123!'
 ```
@@ -82,7 +104,7 @@ Retrieve the GitHub App status for an environment:
 
 ```bash
 pullbasectl github-app status \
-  --server-url https://localhost:8080 \
+  --server-url http://localhost:8080 \
   --admin-token $ADMIN_JWT \
   --environment-id 5
 ```
@@ -95,18 +117,68 @@ List agent tokens for a server.
 
 ```bash
 pullbasectl tokens list \
-  --server-url https://localhost:8080 \
+  --server-url http://localhost:8080 \
   --server-id web-01 \
   --admin-token $ADMIN_JWT
 ```
 
+Output format:
+```
+ID	Description	Created	Expires	Last Used	Active
+1	initial	2025-01-15T12:00:00Z	-	2025-01-15T12:30:00Z	true
+```
+
 ### `pullbasectl tokens create`
 
-Create an agent token. Provide `--description` and optional `--expires-in` (days).
+Create an agent token.
+
+<ParamField flag="--server-id" type="string" required>
+Server identifier.
+</ParamField>
+<ParamField flag="--description" type="string" required>
+Token description (e.g., "ansible integration").
+</ParamField>
+<ParamField flag="--expires-in" type="integer">
+Optional expiration in days.
+</ParamField>
+
+```bash
+pullbasectl tokens create \
+  --server-url http://localhost:8080 \
+  --admin-token $ADMIN_JWT \
+  --server-id web-01 \
+  --description "blue-green deployment" \
+  --expires-in 30
+```
+
+<ResponseExample>
+```text
+Token created successfully. Store this value securely:
+pbt_9BFzQYxK...
+
+Installation instructions:
+Configure AGENT_TOKEN with this value when deploying the agent.
+```
+</ResponseExample>
 
 ### `pullbasectl tokens revoke`
 
 Deactivate a token by ID.
+
+<ParamField flag="--server-id" type="string" required>
+Server identifier.
+</ParamField>
+<ParamField flag="--token-id" type="integer" required>
+Token ID to revoke.
+</ParamField>
+
+```bash
+pullbasectl tokens revoke \
+  --server-url http://localhost:8080 \
+  --admin-token $ADMIN_JWT \
+  --server-id web-01 \
+  --token-id 17
+```
 
 ## User commands
 
@@ -114,9 +186,22 @@ Deactivate a token by ID.
 
 Create a new user.
 
+<ParamField flag="--new-username" type="string" required>
+Username for the new user (3-64 characters).
+</ParamField>
+<ParamField flag="--new-password" type="string" required>
+Password for the new user (minimum 12 characters).
+</ParamField>
+<ParamField flag="--new-password-file" type="path">
+Path to file containing the new user password (alternative to `--new-password`).
+</ParamField>
+<ParamField flag="--role" type="string" default="user">
+Role for the new user (`admin`, `user`, or `viewer`).
+</ParamField>
+
 ```bash
 pullbasectl users create \
-  --server-url https://localhost:8080 \
+  --server-url http://localhost:8080 \
   --admin-token $ADMIN_JWT \
   --new-username ops_user \
   --new-password 'VerySecurePass!2024' \
@@ -125,7 +210,25 @@ pullbasectl users create \
 
 ### `pullbasectl users list`
 
-Paginate through active users. Supports `--role`, `--limit`, and `--offset` flags.
+Paginate through active users.
+
+<ParamField flag="--role" type="string">
+Filter by role (`admin`, `user`, or `viewer`).
+</ParamField>
+<ParamField flag="--limit" type="integer" default="100">
+Maximum users to return (1-500).
+</ParamField>
+<ParamField flag="--offset" type="integer" default="0">
+Pagination offset.
+</ParamField>
+
+```bash
+pullbasectl users list \
+  --server-url http://localhost:8080 \
+  --admin-token $ADMIN_JWT \
+  --role admin \
+  --limit 50
+```
 
 <Info>
 User deletion currently requires the web UI or the REST API (`DELETE /api/v1/users/{userID}`). CLI support is planned.
@@ -135,14 +238,16 @@ User deletion currently requires the web UI or the REST API (`DELETE /api/v1/use
 
 `pullbasectl bootstrap wizard` guides you through first-run setup, including admin creation and GitHub App configuration. The wizard prompts for values interactively and saves them to the server via the API.
 
+```bash
+pullbasectl bootstrap wizard
+```
+
 ## Upcoming commands
 
-The next release will expose `pullbasectl environments` and `pullbasectl servers` subcommands for full lifecycle management. Until then, use the REST API or web UI for environment and server CRUD.
+The following commands are planned for future releases:
 
-<Tip>
-Set the environment variable `PULLBASE_ADMIN_TOKEN` to avoid repeating `--admin-token` on every command:
+- `pullbasectl environments` – CRUD operations for environments
+- `pullbasectl servers` – CRUD operations for servers
+- `pullbasectl users delete` – Delete users via CLI
 
-```bash
-export PULLBASE_ADMIN_TOKEN=$(pullbasectl auth login ... | jq -r '.access_token')
-```
-</Tip>
+Until then, use the REST API or web UI for these operations.

@@ -1,0 +1,225 @@
+---
+title: "Container Deployment"
+description: "Run Pullbase using the official Docker images."
+---
+
+Pullbase publishes container images for the central server (`pullbaseio/pullbase`) and the agent (`pullbaseio/pullbase-agent`). This guide shows how to deploy them with Docker Compose, but the same environment variables apply if you run the images under Kubernetes, Nomad, or another orchestrator.
+
+## Prerequisites
+
+- Docker 24.0+ with the Compose plugin (or an equivalent container runtime)
+- PostgreSQL 15+ (container service or managed instance)
+- Git repository containing your environment configuration (`config.yaml`)
+- (Production) Reverse proxy for TLS termination
+
+<Note>
+For production clusters, place PostgreSQL on managed infrastructure, store secrets in a vault, and terminate TLS at a reverse proxy. The examples below target a single host for clarity.
+</Note>
+
+## Directory layout
+
+```
+/opt/pullbase/
+├── docker-compose.yml
+├── .env
+├── config/
+│   └── github-app.pem   # optional, mounted read-only
+└── logs/                # optional bind mount for log shipping
+```
+
+- `config/` holds the GitHub App private key or other secrets you mount read-only.
+- `logs/` can be bound if you prefer file-based log collection; otherwise rely on `docker logs`.
+
+## Compose template
+
+```yaml docker-compose.yml
+version: '3.9'
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: pullbaseuser
+      POSTGRES_PASSWORD: pullbasepass
+      POSTGRES_DB: pullbasedb
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U pullbaseuser -d pullbasedb']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  pullbase:
+    image: pullbaseio/pullbase:latest
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      # Database
+      PULLBASE_DB_HOST: db
+      PULLBASE_DB_PORT: 5432
+      PULLBASE_DB_USER: pullbaseuser
+      PULLBASE_DB_PASSWORD: pullbasepass
+      PULLBASE_DB_NAME: pullbasedb
+      PULLBASE_DB_SSLMODE: disable
+      # Server
+      PULLBASE_SERVER_PORT: 8080
+      PULLBASE_SERVER_HOST: 0.0.0.0
+      # Authentication
+      PULLBASE_JWT_SECRET: ${PULLBASE_JWT_SECRET}
+      PULLBASE_JWT_EXPIRY_HOURS: 24
+      # Webhooks
+      PULLBASE_WEBHOOK_SECRET_KEY: ${PULLBASE_WEBHOOK_SECRET_KEY}
+      # Git integration
+      PULLBASE_GIT_ENABLED: ${PULLBASE_GIT_ENABLED:-false}
+      PULLBASE_GIT_CLONE_PATH: /app/git-repos
+      PULLBASE_GIT_POLL_INTERVAL: 60
+      # GitHub App (when using private repos)
+      PULLBASE_GITHUB_APP_ID: ${PULLBASE_GITHUB_APP_ID:-}
+      PULLBASE_GITHUB_APP_PRIVATE_KEY_PATH: /config/github-app.pem
+      PULLBASE_GITHUB_APP_API_BASE_URL: https://api.github.com
+    volumes:
+      - ./config:/config:ro
+    ports:
+      - '8080:8080'
+
+volumes:
+  postgres_data:
+```
+
+Populate secrets in `.env`:
+
+```bash
+cat <<'ENV' > .env
+PULLBASE_JWT_SECRET=$(openssl rand -hex 32)
+PULLBASE_WEBHOOK_SECRET_KEY=$(openssl rand -hex 32)
+PULLBASE_GIT_ENABLED=false
+ENV
+```
+
+## Launch the stack
+
+<Steps>
+<Step title="Start services">
+  ```bash
+  docker compose up -d
+  ```
+</Step>
+<Step title="Verify health">
+  ```bash
+  curl http://localhost:8080/api/v1/healthz
+  ```
+</Step>
+<Step title="Tail logs">
+  ```bash
+  docker compose logs -f pullbase
+  ```
+</Step>
+</Steps>
+
+## TLS termination
+
+Pullbase runs on HTTP internally. For production deployments, place it behind a reverse proxy that handles TLS:
+
+### NGINX example
+
+```nginx
+server {
+    listen 443 ssl http2;
+    server_name pullbase.example.com;
+    
+    ssl_certificate /etc/ssl/certs/pullbase.crt;
+    ssl_certificate_key /etc/ssl/private/pullbase.key;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    
+    location / {
+        proxy_pass http://pullbase:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+    }
+}
+```
+
+### Traefik example
+
+```yaml
+# Add to docker-compose.yml
+traefik:
+  image: traefik:v3.0
+  command:
+    - "--providers.docker=true"
+    - "--entrypoints.websecure.address=:443"
+    - "--certificatesresolvers.letsencrypt.acme.tlschallenge=true"
+    - "--certificatesresolvers.letsencrypt.acme.email=admin@example.com"
+    - "--certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json"
+  ports:
+    - "443:443"
+  volumes:
+    - /var/run/docker.sock:/var/run/docker.sock:ro
+    - letsencrypt:/letsencrypt
+
+# Add labels to pullbase service
+pullbase:
+  labels:
+    - "traefik.enable=true"
+    - "traefik.http.routers.pullbase.rule=Host(`pullbase.example.com`)"
+    - "traefik.http.routers.pullbase.entrypoints=websecure"
+    - "traefik.http.routers.pullbase.tls.certresolver=letsencrypt"
+```
+
+<Warning>
+Always use TLS in production. Agents transmit authentication tokens over the network, and the web UI handles user credentials.
+</Warning>
+
+## External databases
+
+Using Amazon RDS, Azure Database for PostgreSQL, or another managed service?
+
+1. Create the database and grant Pullbase a dedicated user.
+2. Set `PULLBASE_DB_HOST`, `PULLBASE_DB_USER`, `PULLBASE_DB_PASSWORD`, and `PULLBASE_DB_NAME` to match the instance.
+3. Enable TLS by setting `PULLBASE_DB_SSLMODE=require` or `PULLBASE_DB_SSLMODE=verify-full`.
+4. Remove the `db` service from `docker-compose.yml`.
+
+## Agent containers
+
+Use the `pullbaseio/pullbase-agent` image to deploy agents as containers.
+
+```yaml docker-compose-agent.yml
+services:
+  pullbase-agent:
+    image: pullbaseio/pullbase-agent:latest
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      SERVER_ID: web-01
+      CENTRAL_SERVER_URL: https://pullbase.example.com
+      AGENT_TOKEN: ${AGENT_TOKEN}
+      CACERT_PATH: /certs/ca.crt
+      SKIP_TLS_VERIFY: "false"
+    volumes:
+      - /etc/pullbase/certs:/certs:ro
+      - /:/host:rw
+```
+
+- Mount the host filesystem so the agent can call package managers and manage services.
+- Provide the CA bundle required to verify your reverse proxy's TLS certificate.
+- For hosts that require package management or service supervision, prefer the native agent binary instead of the container form.
+
+See [Agent Operations](/agent-operations) for detailed configuration options.
+
+## Upgrades
+
+- Pin the image tag (for example, `pullbaseio/pullbase:vX.Y.Z`) and update intentionally.
+- Run `docker compose pull && docker compose up -d` to roll forward with minimal downtime.
+- Review release notes for database migrations and watch container logs during the upgrade.
+
+<Tip>
+Automate backups before upgrades: `docker compose exec db pg_dump -U pullbaseuser pullbasedb > backup.sql`. Managed databases often provide scheduled snapshots—enable them.
+</Tip>
