@@ -122,7 +122,6 @@ services:
       - PULLBASE_DB_HOST=db
       - PULLBASE_DB_PORT=5432
       - PULLBASE_DB_USER=pullbaseuser
-      - PULLBASE_DB_PASSWORD=pullbasepass
       - PULLBASE_DB_NAME=pullbasedb
       # Security
       - PULLBASE_JWT_SECRET=${PULLBASE_JWT_SECRET}
@@ -146,6 +145,7 @@ Create a `.env` file to store your sensitive secrets. **Do not commit this file 
 ```bash .env
 PULLBASE_JWT_SECRET=generate-a-long-random-string-here
 PULLBASE_WEBHOOK_SECRET_KEY=generate-another-random-string
+PULLBASE_DB_PASSWORD=generate-a-secure-database-password
 ```
 </Step>
 
