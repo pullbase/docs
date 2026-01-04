@@ -15,6 +15,15 @@ Deploy Pullbase without containers by running the server and agent binaries dire
 **Database:** Pullbase uses SQLite by default — no external database required. For high-availability deployments, PostgreSQL 15+ is recommended.
 </Info>
 
+## Configure the server
+
+Create a directory for configuration:
+
+```bash
+sudo mkdir -p /etc/pullbase
+sudo mkdir -p /var/lib/pullbase/git-repos
+```
+
 ## Install the server
 
 <Steps>
@@ -35,15 +44,6 @@ Deploy Pullbase without containers by running the server and agent binaries dire
   ```
 </Step>
 </Steps>
-
-## Configure the server
-
-Create a directory for configuration:
-
-```bash
-sudo mkdir -p /etc/pullbase
-sudo mkdir -p /var/lib/pullbase/git-repos
-```
 
 Create an environment file with secrets and connection details:
 
