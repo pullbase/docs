@@ -47,6 +47,7 @@ services:
       - PULLBASE_DB_TYPE=sqlite
       - PULLBASE_DB_PATH=/data/pullbase.db
       # Security
+      # ⚠️ IMPORTANT: Generate secure random strings for production use
       - PULLBASE_JWT_SECRET=change-this-to-a-secure-random-string
       - PULLBASE_WEBHOOK_SECRET_KEY=change-this-to-a-secure-random-string
       - PULLBASE_BOOTSTRAP_SECRET_FILE=/app/secrets/bootstrap.secret
