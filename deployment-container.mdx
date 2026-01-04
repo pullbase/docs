@@ -100,11 +100,11 @@ volumes:
 Populate secrets in `.env`:
 
 ```bash
-cat <<'ENV' > .env
-PULLBASE_JWT_SECRET=$(openssl rand -hex 32)
-PULLBASE_WEBHOOK_SECRET_KEY=$(openssl rand -hex 32)
-PULLBASE_GIT_ENABLED=false
-ENV
+cat <<EOF > .env
+ PULLBASE_JWT_SECRET=$(openssl rand -hex 32)
+ PULLBASE_WEBHOOK_SECRET_KEY=$(openssl rand -hex 32)
+ PULLBASE_GIT_ENABLED=false
+EOF
 ```
 
 ## Launch the stack
