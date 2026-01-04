@@ -1,0 +1,573 @@
+---
+title: "Real-World Examples"
+description: "Practical examples showing how to use Pullbase for common server management scenarios."
+---
+
+These examples demonstrate real-world use cases for Pullbase. Each includes complete, working `config.yaml` files that you can adapt for your environment.
+
+## Example 1: Managing nginx across a web server fleet
+
+This example shows how to manage nginx configuration across multiple web servers. All servers get the same base configuration, and changes are rolled out automatically when you push to Git.
+
+### Repository structure
+
+```
+infra-config/
+  production/
+    web-servers/
+      config.yaml     # Shared config for all web servers
+```
+
+### The config.yaml
+
+```yaml production/web-servers/config.yaml
+serverMetadata:
+  name: "web-server"
+  environment: "production"
+
+packages:
+  - name: nginx
+    state: present
+  - name: curl
+    state: present
+  - name: htop
+    state: present
+
+services:
+  - name: nginx
+    enabled: true
+    state: running
+    managed: true
+
+files:
+  - path: /etc/nginx/nginx.conf
+    content: |
+      user www-data;
+      worker_processes auto;
+      pid /run/nginx.pid;
+      include /etc/nginx/modules-enabled/*.conf;
+
+      events {
+          worker_connections 1024;
+          use epoll;
+          multi_accept on;
+      }
+
+      http {
+          sendfile on;
+          tcp_nopush on;
+          tcp_nodelay on;
+          keepalive_timeout 65;
+          types_hash_max_size 2048;
+          server_tokens off;
+
+          include /etc/nginx/mime.types;
+          default_type application/octet-stream;
+
+          # Logging
+          access_log /var/log/nginx/access.log;
+          error_log /var/log/nginx/error.log;
+
+          # Gzip compression
+          gzip on;
+          gzip_vary on;
+          gzip_proxied any;
+          gzip_comp_level 6;
+          gzip_types text/plain text/css text/xml application/json application/javascript;
+
+          include /etc/nginx/conf.d/*.conf;
+          include /etc/nginx/sites-enabled/*;
+      }
+    mode: "0644"
+    reloadService: nginx
+
+  - path: /etc/nginx/sites-available/default
+    content: |
+      server {
+          listen 80 default_server;
+          listen [::]:80 default_server;
+
+          root /var/www/html;
+          index index.html index.htm;
+
+          server_name _;
+
+          location / {
+              try_files $uri $uri/ =404;
+          }
+
+          location /health {
+              access_log off;
+              return 200 "healthy\n";
+              add_header Content-Type text/plain;
+          }
+      }
+    mode: "0644"
+    reloadService: nginx
+
+system:
+  serviceManager: systemd
+```
+
+### Workflow: Updating nginx config
+
+<Steps>
+<Step title="Edit the config">
+Update the nginx configuration in your Git repository:
+
+```bash
+cd infra-config
+vim production/web-servers/config.yaml
+# Make your changes to the nginx config
+```
+</Step>
+
+<Step title="Validate before committing">
+Use the CLI to validate your config locally:
+
+```bash
+pullbasectl validate-config --file production/web-servers/config.yaml
+```
+
+Output if valid:
+```
+Config is valid
+```
+</Step>
+
+<Step title="Commit and push">
+```bash
+git add production/web-servers/config.yaml
+git commit -m "Update nginx: enable gzip compression"
+git push origin main
+```
+</Step>
+
+<Step title="Monitor rollout">
+Watch the rollout in the dashboard or via CLI:
+
+```bash
+pullbasectl status --environment-id 1 --watch
+```
+
+Output:
+```
+Fleet Status Summary
+  Total:   10 servers
+  Healthy: 8
+  Drifted: 2
+  Errors:  0
+
+SERVER    ENVIRONMENT  STATUS    DRIFTED  COMMIT   LAST SEEN
+web-01    production   Syncing   yes      a1b2c3d  just now
+web-02    production   Applied   no       a1b2c3d  30 seconds ago
+...
+```
+
+After agents reconcile:
+```
+Fleet Status Summary
+  Total:   10 servers
+  Healthy: 10
+  Drifted: 0
+  Errors:  0
+```
+</Step>
+</Steps>
+
+---
+
+## Example 2: Rolling out security patches
+
+This example shows how to ensure security-critical packages are always at the latest version across your fleet.
+
+### The config.yaml
+
+```yaml production/security-baseline/config.yaml
+serverMetadata:
+  name: "security-baseline"
+  environment: "production"
+
+packages:
+  # Security-critical: always latest
+  - name: openssl
+    state: latest
+  - name: openssh-server
+    state: latest
+  - name: ca-certificates
+    state: latest
+  - name: libssl3
+    state: latest
+
+  # Remove known-vulnerable packages
+  - name: telnet
+    state: absent
+  - name: rsh-client
+    state: absent
+
+  # Standard utilities: just ensure present
+  - name: fail2ban
+    state: present
+  - name: ufw
+    state: present
+  - name: unattended-upgrades
+    state: present
+
+services:
+  - name: fail2ban
+    enabled: true
+    state: running
+    managed: true
+  - name: ssh
+    enabled: true
+    state: running
+    managed: true
+  - name: ufw
+    enabled: true
+    state: running
+    managed: true
+
+files:
+  - path: /etc/ssh/sshd_config.d/hardening.conf
+    content: |
+      # Security hardening for SSH
+      PermitRootLogin no
+      PasswordAuthentication no
+      PubkeyAuthentication yes
+      X11Forwarding no
+      AllowTcpForwarding no
+      MaxAuthTries 3
+      LoginGraceTime 60
+      ClientAliveInterval 300
+      ClientAliveCountMax 2
+    mode: "0644"
+    reloadService: ssh
+
+  - path: /etc/fail2ban/jail.local
+    content: |
+      [DEFAULT]
+      bantime = 3600
+      findtime = 600
+      maxretry = 3
+
+      [sshd]
+      enabled = true
+      port = ssh
+      filter = sshd
+      logpath = /var/log/auth.log
+    mode: "0644"
+    reloadService: fail2ban
+
+system:
+  serviceManager: systemd
+```
+
+### Workflow: Responding to a CVE
+
+When a critical vulnerability is announced (e.g., in OpenSSL):
+
+<Steps>
+<Step title="No config change needed">
+Because `openssl` is set to `state: latest`, agents will install updates automatically during their next reconciliation cycle.
+</Step>
+
+<Step title="Force immediate reconciliation (optional)">
+If you need updates applied immediately, trigger a manual sync from the dashboard or restart agents:
+
+```bash
+# On each server (or via your automation)
+sudo systemctl restart pullbase-agent
+```
+</Step>
+
+<Step title="Verify patch status">
+```bash
+pullbasectl status --all --output json | jq '.servers[] | {id: .server_id, status: .status}'
+```
+
+Check the specific package version on servers:
+```bash
+ssh web-01 'dpkg -l openssl'
+```
+</Step>
+</Steps>
+
+<Tip>
+Set up a [webhook notification](/environments-and-servers#webhook-notifications) to alert your team when drift is detected or errors occur during reconciliation.
+</Tip>
+
+---
+
+## Example 3: Environment promotion (staging to production)
+
+This example shows a repository structure for managing multiple environments, making it easy to test changes in staging before promoting to production.
+
+### Repository structure
+
+```
+infra-config/
+  environments/
+    staging/
+      config.yaml
+    production/
+      config.yaml
+  shared/
+    nginx-base.conf      # Reference file (not directly used by Pullbase)
+```
+
+### Staging config
+
+```yaml environments/staging/config.yaml
+serverMetadata:
+  name: "app-server"
+  environment: "staging"
+
+packages:
+  - name: nginx
+    state: latest
+  - name: nodejs
+    state: present
+  - name: redis-tools
+    state: present
+
+services:
+  - name: nginx
+    enabled: true
+    state: running
+    managed: true
+
+files:
+  - path: /etc/nginx/sites-available/app
+    content: |
+      upstream app_backend {
+          server 127.0.0.1:3000;
+          keepalive 32;
+      }
+
+      server {
+          listen 80;
+          server_name staging.example.com;
+
+          # Staging: allow verbose errors
+          error_page 500 502 503 504 /50x.html;
+
+          location / {
+              proxy_pass http://app_backend;
+              proxy_http_version 1.1;
+              proxy_set_header Upgrade $http_upgrade;
+              proxy_set_header Connection 'upgrade';
+              proxy_set_header Host $host;
+              proxy_set_header X-Real-IP $remote_addr;
+              proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+              proxy_cache_bypass $http_upgrade;
+          }
+
+          location /health {
+              access_log off;
+              return 200 "staging-ok\n";
+          }
+      }
+    mode: "0644"
+    reloadService: nginx
+
+  - path: /etc/nginx/sites-enabled/app
+    content: |
+      # Symlink managed by Pullbase - just use include
+      include /etc/nginx/sites-available/app;
+    mode: "0644"
+    reloadService: nginx
+
+system:
+  serviceManager: systemd
+```
+
+### Production config
+
+```yaml environments/production/config.yaml
+serverMetadata:
+  name: "app-server"
+  environment: "production"
+
+packages:
+  - name: nginx
+    state: present
+  - name: nodejs
+    state: present
+  - name: redis-tools
+    state: present
+
+services:
+  - name: nginx
+    enabled: true
+    state: running
+    managed: true
+
+files:
+  - path: /etc/nginx/sites-available/app
+    content: |
+      upstream app_backend {
+          server 127.0.0.1:3000;
+          server 127.0.0.1:3001 backup;
+          keepalive 64;
+      }
+
+      server {
+          listen 80;
+          server_name app.example.com;
+
+          # Production: minimal error exposure
+          error_page 500 502 503 504 /50x.html;
+
+          # Security headers
+          add_header X-Frame-Options "SAMEORIGIN" always;
+          add_header X-Content-Type-Options "nosniff" always;
+          add_header X-XSS-Protection "1; mode=block" always;
+
+          location / {
+              proxy_pass http://app_backend;
+              proxy_http_version 1.1;
+              proxy_set_header Upgrade $http_upgrade;
+              proxy_set_header Connection 'upgrade';
+              proxy_set_header Host $host;
+              proxy_set_header X-Real-IP $remote_addr;
+              proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+              proxy_cache_bypass $http_upgrade;
+
+              # Production timeouts
+              proxy_connect_timeout 10s;
+              proxy_send_timeout 60s;
+              proxy_read_timeout 60s;
+          }
+
+          location /health {
+              access_log off;
+              return 200 "ok\n";
+          }
+      }
+    mode: "0644"
+    reloadService: nginx
+
+  - path: /etc/nginx/sites-enabled/app
+    content: |
+      include /etc/nginx/sites-available/app;
+    mode: "0644"
+    reloadService: nginx
+
+system:
+  serviceManager: systemd
+```
+
+### Workflow: Promoting changes
+
+<Steps>
+<Step title="Make changes in staging">
+```bash
+cd infra-config
+vim environments/staging/config.yaml
+# Add new upstream server, change timeout, etc.
+```
+</Step>
+
+<Step title="Test in staging">
+```bash
+git add environments/staging/config.yaml
+git commit -m "staging: add connection pooling to upstream"
+git push origin main
+```
+
+Wait for staging servers to reconcile and verify the changes work.
+</Step>
+
+<Step title="Promote to production">
+Copy the tested changes to production config:
+
+```bash
+# Review the diff
+diff environments/staging/config.yaml environments/production/config.yaml
+
+# Apply the specific change to production
+vim environments/production/config.yaml
+# Make the same changes (with production-specific values)
+
+git add environments/production/config.yaml
+git commit -m "production: add connection pooling (tested in staging)"
+git push origin main
+```
+</Step>
+
+<Step title="Monitor production rollout">
+```bash
+pullbasectl status --environment-id 2 --watch --interval 5
+```
+</Step>
+
+<Step title="Rollback if needed">
+If something goes wrong:
+
+```bash
+# Via CLI
+pullbasectl environments rollback \
+  --server-url https://pullbase.example.com \
+  --admin-token $ADMIN_TOKEN \
+  --id 2 \
+  --commit abc123 \
+  --reason "Connection pooling causing 502 errors"
+
+# Or via dashboard: Environment > Rollback > Select commit
+```
+</Step>
+</Steps>
+
+---
+
+## Tips for managing configs at scale
+
+<CardGroup cols={2}>
+<Card title="Use dry-run mode first" icon="flask">
+Deploy agents in dry-run mode initially to see what *would* change without actually making changes:
+
+```bash
+AGENT_DRY_RUN=true ./pullbase-agent
+```
+</Card>
+
+<Card title="Set up webhooks" icon="bell">
+Configure webhook notifications to get alerts on drift or errors:
+
+```bash
+pullbasectl environments update \
+  --id 1 \
+  --notification-webhook-url https://hooks.slack.com/...
+```
+</Card>
+
+<Card title="Validate before pushing" icon="check">
+Always validate configs locally before committing:
+
+```bash
+pullbasectl validate-config --file config.yaml
+```
+</Card>
+
+<Card title="Use meaningful commit messages" icon="message">
+Your Git history becomes your change log. Write clear commit messages:
+
+```
+nginx: increase worker_connections to 2048
+
+Load testing showed connection exhaustion at 1024.
+Tested in staging env for 24h before promoting.
+```
+</Card>
+</CardGroup>
+
+## Next steps
+
+<CardGroup cols={2}>
+<Card title="Configuration reference" icon="file-code" href="/configuration-repository">
+Full reference for all config.yaml options
+</Card>
+<Card title="CLI reference" icon="terminal" href="/reference/cli">
+Complete pullbasectl command documentation
+</Card>
+</CardGroup>

@@ -3,6 +3,10 @@ title: "CLI Reference"
 description: "Command reference for the pullbasectl utility."
 ---
 
+<Tip>
+New to the CLI? Check out the [CLI Guide](/guides/pullbasectl) for workflows and examples.
+</Tip>
+
 `pullbasectl` ships with the Pullbase Docker image and is available inside the container at `/pullbasectl`. You can run it from the host by invoking the container or by copying the binary out of the image.
 
 ```bash
@@ -85,6 +89,496 @@ pullbasectl auth login \
 ```
 
 Use the returned token for subsequent CLI calls with `--admin-token`.
+
+## Server commands
+
+Manage servers (agents) registered with Pullbase.
+
+### `pullbasectl servers list`
+
+List all servers, optionally filtered by environment.
+
+<ParamField flag="--environment-id" type="integer">
+Filter servers by environment ID.
+</ParamField>
+<ParamField flag="--output" type="string" default="table">
+Output format: `table` or `json`.
+</ParamField>
+
+```bash
+pullbasectl servers list \
+  --server-url http://localhost:8080 \
+  --admin-token $ADMIN_JWT
+```
+
+<ResponseExample>
+```
+ID          NAME              ENVIRONMENT    STATUS     DRIFTED  AUTO-RECONCILE
+web-01      Production Web    production     Applied    no       yes
+api-01      API Server        production     Applied    no       yes
+staging-01  Staging Server    staging        Drifted    yes      no
+```
+</ResponseExample>
+
+Filter by environment:
+
+```bash
+pullbasectl servers list \
+  --server-url http://localhost:8080 \
+  --admin-token $ADMIN_JWT \
+  --environment-id 1
+```
+
+### `pullbasectl servers create`
+
+Register a new server.
+
+<ParamField flag="--id" type="string" required>
+Unique server identifier (e.g., `web-01`, `api-prod-1`).
+</ParamField>
+<ParamField flag="--name" type="string" required>
+Human-readable server name.
+</ParamField>
+<ParamField flag="--environment-id" type="integer">
+Environment ID to associate with this server.
+</ParamField>
+<ParamField flag="--output" type="string" default="table">
+Output format: `table` or `json`.
+</ParamField>
+
+```bash
+pullbasectl servers create \
+  --server-url http://localhost:8080 \
+  --admin-token $ADMIN_JWT \
+  --id web-02 \
+  --name "Production Web 2" \
+  --environment-id 1
+```
+
+<ResponseExample>
+```text
+Server created successfully.
+  ID:            web-02
+  Name:          Production Web 2
+  Environment:   1
+  Auto-Reconcile: false
+```
+</ResponseExample>
+
+### `pullbasectl servers get`
+
+Get detailed information about a specific server.
+
+<ParamField flag="--id" type="string" required>
+Server ID to retrieve.
+</ParamField>
+<ParamField flag="--output" type="string" default="table">
+Output format: `table` or `json`.
+</ParamField>
+
+```bash
+pullbasectl servers get \
+  --server-url http://localhost:8080 \
+  --admin-token $ADMIN_JWT \
+  --id web-01
+```
+
+<ResponseExample>
+```text
+Server: web-01
+  Name:           Production Web
+  Environment:    production
+  Auto-Reconcile: true
+  Status:         Applied
+  Commit:         a1b2c3d
+  Drifted:        no
+  Last Seen:      2025-01-15T12:30:00Z
+  Created:        2025-01-01T09:00:00Z
+```
+</ResponseExample>
+
+### `pullbasectl servers delete`
+
+Delete a server registration.
+
+<ParamField flag="--id" type="string" required>
+Server ID to delete.
+</ParamField>
+<ParamField flag="--force" type="boolean" default="false">
+Skip confirmation prompt.
+</ParamField>
+
+```bash
+pullbasectl servers delete \
+  --server-url http://localhost:8080 \
+  --admin-token $ADMIN_JWT \
+  --id web-02 \
+  --force
+```
+
+<ResponseExample>
+```text
+Server 'web-02' deleted successfully.
+```
+</ResponseExample>
+
+### `pullbasectl servers install-script`
+
+Generate a one-liner install script for deploying the agent to a server.
+
+<ParamField flag="--id" type="string" required>
+Server ID.
+</ParamField>
+<ParamField flag="--token" type="string" required>
+Agent token for authentication (from `tokens create`).
+</ParamField>
+<ParamField flag="--version" type="string" default="latest">
+Agent version to install.
+</ParamField>
+
+```bash
+pullbasectl servers install-script \
+  --server-url http://localhost:8080 \
+  --admin-token $ADMIN_JWT \
+  --id web-01 \
+  --token pbt_9BFzQYxK...
+```
+
+The output is a shell script you can pipe directly to bash on the target server:
+
+```bash
+pullbasectl servers install-script ... | ssh user@server 'sudo bash'
+```
+
+## Environment commands
+
+Manage environments (Git repositories) that Pullbase tracks.
+
+### `pullbasectl environments list`
+
+List all environments.
+
+<ParamField flag="--output" type="string" default="table">
+Output format: `table` or `json`.
+</ParamField>
+
+```bash
+pullbasectl environments list \
+  --server-url http://localhost:8080 \
+  --admin-token $ADMIN_JWT
+```
+
+<ResponseExample>
+```
+ID  NAME        REPO                                     BRANCH  STATUS  AUTO-RECONCILE
+1   production  https://github.com/acme/infra-config     main    active  yes
+2   staging     https://github.com/acme/infra-config     staging active  no
+```
+</ResponseExample>
+
+### `pullbasectl environments create`
+
+Create a new environment.
+
+<ParamField flag="--name" type="string" required>
+Environment name.
+</ParamField>
+<ParamField flag="--repo-url" type="string" required>
+Git repository URL.
+</ParamField>
+<ParamField flag="--branch" type="string" default="main">
+Git branch to track.
+</ParamField>
+<ParamField flag="--deploy-path" type="string">
+Path within the repository where config files are located.
+</ParamField>
+<ParamField flag="--installation-id" type="integer">
+GitHub App installation ID (required for private repos).
+</ParamField>
+<ParamField flag="--output" type="string" default="table">
+Output format: `table` or `json`.
+</ParamField>
+
+```bash
+pullbasectl environments create \
+  --server-url http://localhost:8080 \
+  --admin-token $ADMIN_JWT \
+  --name production \
+  --repo-url https://github.com/acme/infra-config \
+  --branch main \
+  --deploy-path configs/production
+```
+
+<ResponseExample>
+```text
+Environment created successfully.
+  ID:            1
+  Name:          production
+  Repository:    https://github.com/acme/infra-config
+  Branch:        main
+  Deploy Path:   configs/production
+  Status:        pending
+  Auto-Reconcile: false
+```
+</ResponseExample>
+
+### `pullbasectl environments get`
+
+Get detailed information about an environment.
+
+<ParamField flag="--id" type="integer" required>
+Environment ID to retrieve.
+</ParamField>
+<ParamField flag="--output" type="string" default="table">
+Output format: `table` or `json`.
+</ParamField>
+
+```bash
+pullbasectl environments get \
+  --server-url http://localhost:8080 \
+  --admin-token $ADMIN_JWT \
+  --id 1
+```
+
+<ResponseExample>
+```text
+Environment: production (ID: 1)
+  Repository:     https://github.com/acme/infra-config
+  Branch:         main
+  Deploy Path:    configs/production
+  Provider:       github
+  Installation:   12345678
+  Status:         active
+  Auto-Reconcile: true
+  Deployed:       a1b2c3d4e5f6
+  Last Webhook:   2025-01-15T12:00:00Z
+  Created:        2025-01-01T09:00:00Z
+  Updated:        2025-01-15T12:00:00Z
+```
+</ResponseExample>
+
+### `pullbasectl environments delete`
+
+Delete an environment. This will affect all associated servers.
+
+<ParamField flag="--id" type="integer" required>
+Environment ID to delete.
+</ParamField>
+<ParamField flag="--force" type="boolean" default="false">
+Skip confirmation prompt.
+</ParamField>
+
+```bash
+pullbasectl environments delete \
+  --server-url http://localhost:8080 \
+  --admin-token $ADMIN_JWT \
+  --id 2 \
+  --force
+```
+
+<ResponseExample>
+```text
+Environment 2 deleted successfully.
+```
+</ResponseExample>
+
+### `pullbasectl environments rollback`
+
+Initiate a rollback to a previous commit.
+
+<ParamField flag="--id" type="integer" required>
+Environment ID.
+</ParamField>
+<ParamField flag="--commit" type="string" required>
+Target commit hash to rollback to.
+</ParamField>
+<ParamField flag="--reason" type="string">
+Reason for the rollback (for audit purposes).
+</ParamField>
+<ParamField flag="--output" type="string" default="table">
+Output format: `table` or `json`.
+</ParamField>
+
+```bash
+pullbasectl environments rollback \
+  --server-url http://localhost:8080 \
+  --admin-token $ADMIN_JWT \
+  --id 1 \
+  --commit a1b2c3d \
+  --reason "Reverting broken nginx config"
+```
+
+<ResponseExample>
+```text
+Rollback initiated successfully.
+  ID:          42
+  Environment: 1
+  From:        f6e5d4c
+  To:          a1b2c3d
+  Status:      pending
+  Reason:      Reverting broken nginx config
+```
+</ResponseExample>
+
+### `pullbasectl environments rollback-list`
+
+List rollback history for an environment.
+
+<ParamField flag="--id" type="integer" required>
+Environment ID.
+</ParamField>
+<ParamField flag="--output" type="string" default="table">
+Output format: `table` or `json`.
+</ParamField>
+
+```bash
+pullbasectl environments rollback-list \
+  --server-url http://localhost:8080 \
+  --admin-token $ADMIN_JWT \
+  --id 1
+```
+
+<ResponseExample>
+```
+ID  FROM     TO       STATUS     CREATED
+42  f6e5d4c  a1b2c3d  completed  2025-01-15T12:30:00Z
+38  b2c3d4e  f6e5d4c  completed  2025-01-10T09:15:00Z
+```
+</ResponseExample>
+
+## Status commands
+
+View fleet-wide or per-server status.
+
+### `pullbasectl status`
+
+Display server status. Requires one of `--server-id`, `--environment-id`, or `--all`.
+
+<ParamField flag="--server-id" type="string">
+Show status for a specific server.
+</ParamField>
+<ParamField flag="--environment-id" type="integer">
+Show status for all servers in an environment.
+</ParamField>
+<ParamField flag="--all" type="boolean">
+Show fleet-wide status overview.
+</ParamField>
+<ParamField flag="--output" type="string" default="table">
+Output format: `table` or `json`.
+</ParamField>
+<ParamField flag="--watch" type="boolean" default="false">
+Continuously refresh status.
+</ParamField>
+<ParamField flag="--interval" type="integer" default="5">
+Refresh interval in seconds (with `--watch`).
+</ParamField>
+
+**Single server status:**
+
+```bash
+pullbasectl status \
+  --server-url http://localhost:8080 \
+  --admin-token $ADMIN_JWT \
+  --server-id web-01
+```
+
+**Environment status:**
+
+```bash
+pullbasectl status \
+  --server-url http://localhost:8080 \
+  --admin-token $ADMIN_JWT \
+  --environment-id 1
+```
+
+**Fleet-wide status:**
+
+```bash
+pullbasectl status \
+  --server-url http://localhost:8080 \
+  --admin-token $ADMIN_JWT \
+  --all
+```
+
+<ResponseExample>
+```
+Fleet Status Summary
+  Total:   5 servers
+  Healthy: 4
+  Drifted: 1
+  Errors:  0
+  Unknown: 0
+
+SERVER      ENVIRONMENT  STATUS   DRIFTED  COMMIT   LAST SEEN
+web-01      production   Applied  no       a1b2c3d  2 minutes ago
+web-02      production   Applied  no       a1b2c3d  1 minute ago
+api-01      production   Applied  no       a1b2c3d  3 minutes ago
+staging-01  staging      Drifted  yes      b2c3d4e  5 minutes ago
+dev-01      development  Applied  no       c3d4e5f  just now
+```
+</ResponseExample>
+
+**Watch mode (live refresh):**
+
+```bash
+pullbasectl status \
+  --server-url http://localhost:8080 \
+  --admin-token $ADMIN_JWT \
+  --all \
+  --watch \
+  --interval 10
+```
+
+This clears the screen and refreshes status every 10 seconds. Press `Ctrl+C` to stop.
+
+## Config validation
+
+### `pullbasectl validate-config`
+
+Validate a `config.yaml` file before deploying to your Git repository.
+
+<Tip>
+This command performs local validation only and does not require a connection to the Pullbase server. You can use it in CI pipelines or pre-commit hooks without authentication.
+</Tip>
+
+<ParamField flag="--file" type="path" required>
+Path to the config.yaml file to validate.
+</ParamField>
+<ParamField flag="--output" type="string" default="table">
+Output format: `table` or `json`.
+</ParamField>
+
+```bash
+pullbasectl validate-config --file ./config.yaml
+```
+
+<ResponseExample>
+```text
+✓ Config is valid
+```
+</ResponseExample>
+
+If validation fails:
+
+```bash
+pullbasectl validate-config --file ./broken-config.yaml
+```
+
+<ResponseExample>
+```
+✗ Config has 2 error(s):
+
+FIELD              LINE  MESSAGE
+files[0].path      5     path is required
+files[1].content   12    content cannot be empty when source is not specified
+```
+</ResponseExample>
+
+Use `--output json` for programmatic parsing:
+
+```bash
+pullbasectl validate-config --file ./config.yaml --output json
+```
 
 ## GitHub App commands
 
@@ -241,13 +735,3 @@ User deletion currently requires the web UI or the REST API (`DELETE /api/v1/use
 ```bash
 pullbasectl bootstrap wizard
 ```
-
-## Upcoming commands
-
-The following commands are planned for future releases:
-
-- `pullbasectl environments` – CRUD operations for environments
-- `pullbasectl servers` – CRUD operations for servers
-- `pullbasectl users delete` – Delete users via CLI
-
-Until then, use the REST API or web UI for these operations.

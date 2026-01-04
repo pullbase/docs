@@ -3,83 +3,55 @@ title: "Bare-Metal Deployment"
 description: "Run the Pullbase server and agent directly on VMs or physical hosts."
 ---
 
-You can operate Pullbase without containers by compiling the server and agent binaries and managing them with systemd. This gives the agent full access to package managers, init systems, and the filesystem on traditional hosts.
+Deploy Pullbase without containers by running the server and agent binaries directly with systemd. This is the recommended approach for production Linux servers.
 
 ## Prerequisites
 
 - Ubuntu 22.04+, Debian 12, Rocky Linux 9, or a similar systemd-based distribution
-- Go 1.22+ and Node.js 20+ (needed only on the build machine)
-- PostgreSQL 15+ (local or managed service)
-- GNU Make, Git, and `openssl`
-- (Production) Reverse proxy for TLS termination
+- `curl` and `openssl`
+- (Production) Reverse proxy for TLS termination or certificates for native TLS
 
 <Info>
-It is common to build the binaries on a CI runner or a dedicated build VM, then distribute the resulting artifacts to your fleet. The commands below assume you are building on the same host that will run Pullbase.
+**Database:** Pullbase uses SQLite by default — no external database required. For high-availability deployments, PostgreSQL 15+ is recommended.
 </Info>
 
-## Build the server
+## Install the server
 
 <Steps>
-<Step title="Clone the repository">
-  ```bash
-  git clone https://github.com/pullbaseio/pullbase.git
-  cd pullbase
-  ```
-</Step>
-
-<Step title="Compile the web UI and server binary">
-  Use the helper script to build the Vite UI and embed it in the Go binary.
+<Step title="Download the server binary">
+  Download the latest release with the web UI embedded:
 
   ```bash
-  ./scripts/build-with-ui.sh
+  curl -fsSL -o pullbase-server "https://github.com/pullbase/pullbase/releases/latest/download/pullbase-server-linux-amd64"
+  sudo install -m 0755 pullbase-server /usr/local/bin/pullbase-server
   ```
 
-  <Check>
-  The server binary is written to `bin/pullbase-server`.
-  </Check>
+  For ARM64 systems, use `pullbase-server-linux-arm64`.
 </Step>
 
-<Step title="Install the binary">
+<Step title="Download migrations">
   ```bash
-  sudo install -m 0755 bin/pullbase-server /usr/local/bin/pullbase-server
+  curl -fsSL "https://github.com/pullbase/pullbase/releases/latest/download/migrations.tar.gz" | sudo tar -xzf - -C /var/lib/pullbase/
   ```
 </Step>
 </Steps>
 
-## Prepare PostgreSQL
+## Configure the server
 
-Create a database and user for Pullbase (adapt the host/credentials to your environment):
-
-```bash
-sudo -u postgres psql <<'SQL'
-CREATE ROLE pullbaseuser WITH LOGIN PASSWORD 'change-me';
-CREATE DATABASE pullbasedb OWNER pullbaseuser;
-GRANT ALL PRIVILEGES ON DATABASE pullbasedb TO pullbaseuser;
-SQL
-```
-
-If PostgreSQL runs on another host or a managed service, allow network access from the Pullbase server and enforce TLS according to your security policy.
-
-## Configure environment
-
-Create a directory to hold configuration:
+Create a directory for configuration:
 
 ```bash
 sudo mkdir -p /etc/pullbase
-sudo chown $(whoami) /etc/pullbase
+sudo mkdir -p /var/lib/pullbase/git-repos
 ```
 
 Create an environment file with secrets and connection details:
 
 ```bash
 cat <<EOF | sudo tee /etc/pullbase/pullbase.env
-# Database configuration
-PULLBASE_DB_HOST=localhost
-PULLBASE_DB_PORT=5432
-PULLBASE_DB_USER=pullbaseuser
-PULLBASE_DB_PASSWORD=change-me
-PULLBASE_DB_NAME=pullbasedb
-PULLBASE_DB_SSLMODE=disable
+# Database configuration (SQLite is default — no setup required)
+PULLBASE_DB_TYPE=sqlite
+PULLBASE_DB_PATH=/var/lib/pullbase/pullbase.db
 
 # Server configuration
 PULLBASE_SERVER_PORT=8080
@@ -100,7 +72,6 @@ PULLBASE_GIT_POLL_INTERVAL=60
 # GitHub App (when using private repos)
 # PULLBASE_GITHUB_APP_ID=your-app-id
 # PULLBASE_GITHUB_APP_PRIVATE_KEY_PATH=/etc/pullbase/github-app.pem
-# PULLBASE_GITHUB_APP_API_BASE_URL=https://api.github.com
 
 # Migrations
 PULLBASE_MIGRATIONS_PATH=file:///var/lib/pullbase/migrations
@@ -112,7 +83,42 @@ sudo chmod 600 /etc/pullbase/pullbase.env
 Store long-lived secrets in a vault or parameter store and template this environment file during provisioning.
 </Tip>
 
-## Create a systemd unit
+### Using PostgreSQL instead
+
+For high-availability or large-scale deployments, use PostgreSQL:
+
+```bash
+# First, create the PostgreSQL database
+sudo -u postgres psql <<'SQL'
+CREATE ROLE pullbaseuser WITH LOGIN PASSWORD 'change-me';
+CREATE DATABASE pullbasedb OWNER pullbaseuser;
+GRANT ALL PRIVILEGES ON DATABASE pullbasedb TO pullbaseuser;
+SQL
+```
+
+Then update `/etc/pullbase/pullbase.env`:
+
+```bash
+# Database configuration (PostgreSQL)
+PULLBASE_DB_TYPE=postgres
+PULLBASE_DB_HOST=localhost
+PULLBASE_DB_PORT=5432
+PULLBASE_DB_USER=pullbaseuser
+PULLBASE_DB_PASSWORD=change-me
+PULLBASE_DB_NAME=pullbasedb
+PULLBASE_DB_SSLMODE=disable
+```
+
+## Create a systemd service
+
+Create the service user:
+
+```bash
+sudo useradd --system --home /var/lib/pullbase --shell /usr/sbin/nologin pullbase
+sudo chown -R pullbase:pullbase /var/lib/pullbase
+```
+
+Create the systemd unit:
 
 ```ini /etc/systemd/system/pullbase.service
 [Unit]
@@ -133,21 +139,6 @@ WorkingDirectory=/var/lib/pullbase
 WantedBy=multi-user.target
 ```
 
-Create the runtime user and data directory:
-
-```bash
-sudo useradd --system --home /var/lib/pullbase --shell /usr/sbin/nologin pullbase
-sudo mkdir -p /var/lib/pullbase/git-repos
-sudo chown -R pullbase:pullbase /var/lib/pullbase
-```
-
-Copy migrations to the expected location:
-
-```bash
-sudo cp -r server/migrations /var/lib/pullbase/
-sudo chown -R pullbase:pullbase /var/lib/pullbase/migrations
-```
-
 Enable and start the service:
 
 ```bash
@@ -157,12 +148,34 @@ sudo systemctl status pullbase.service
 ```
 
 <Check>
-Verify the health endpoint: `curl http://localhost:8080/api/v1/healthz`.
+Verify the health endpoint: `curl http://localhost:8080/api/v1/healthz`
 </Check>
 
-## TLS termination
+## TLS configuration
 
-Pullbase runs on HTTP. For production, place it behind a reverse proxy that terminates TLS:
+Pullbase supports two approaches for TLS:
+
+### Option 1: Native TLS (simpler)
+
+Enable native TLS by adding these variables to `/etc/pullbase/pullbase.env`:
+
+```bash
+PULLBASE_TLS_ENABLED=true
+PULLBASE_TLS_CERT_PATH=/etc/pullbase/certs/server.crt
+PULLBASE_TLS_KEY_PATH=/etc/pullbase/certs/server.key
+```
+
+For development, generate self-signed certificates:
+
+```bash
+pullbase-server --generate-dev-certs
+```
+
+**Use CA-signed certificates in production.**
+
+### Option 2: Reverse proxy (for existing infrastructure)
+
+Place Pullbase behind a reverse proxy that terminates TLS:
 
 ```nginx /etc/nginx/sites-available/pullbase
 server {
@@ -184,64 +197,59 @@ server {
 }
 ```
 
-## Build and install the agent
+## Install agents on managed servers
 
-Follow these steps on every managed server:
+Once the central server is running, install agents on each server you want to manage.
 
-<Steps>
-<Step title="Compile the agent">
-  ```bash
-  git clone https://github.com/pullbaseio/pullbase.git
-  cd pullbase/agent
-  go build -o pullbase-agent
-  sudo install -m 0755 pullbase-agent /usr/local/bin/pullbase-agent
-  ```
-</Step>
-<Step title="Create environment file">
-  ```bash
-  sudo mkdir -p /etc/pullbase
-  sudo tee /etc/pullbase/agent.env > /dev/null <<'ENV'
-SERVER_ID=server-01
-CENTRAL_SERVER_URL=https://pullbase.example.com
-AGENT_TOKEN=pbt_...
-CACERT_PATH=/etc/pullbase/ca.crt
-SKIP_TLS_VERIFY=false
-ENV
-sudo chmod 600 /etc/pullbase/agent.env
+### Recommended: Install script
+
+After creating a server and token in the Pullbase UI, run the install script on each managed server:
+
+```bash
+curl -fsSL "https://pullbase.example.com/api/v1/servers/web-01/install-script?token=pbt_xxx" | sudo bash
 ```
-</Step>
-<Step title="Install systemd unit">
-  ```ini /etc/systemd/system/pullbase-agent.service
-[Unit]
-Description=Pullbase Agent
-After=network-online.target
 
-[Service]
-EnvironmentFile=/etc/pullbase/agent.env
-ExecStart=/usr/local/bin/pullbase-agent
-Restart=always
-RestartSec=10
+The script downloads the agent, creates a systemd service, and starts it automatically.
 
-[Install]
-WantedBy=multi-user.target
-  ```
+<Tip>
+Get the complete install command from the UI: **Servers > [your server] > Install**
+</Tip>
 
-  ```bash
-  sudo systemctl daemon-reload
-  sudo systemctl enable --now pullbase-agent.service
-  sudo systemctl status pullbase-agent.service
-  ```
-</Step>
-</Steps>
+### Manual installation
 
-Refer to [Agent Operations](/agent-operations) for troubleshooting, logging, and advanced configuration.
+For more control, see [Agent Operations](/agent-operations#manual-systemd-setup) for step-by-step manual installation.
 
 ## Next steps
 
-- [Bootstrap your first admin](/bootstrapping) using the generated secret.
-- [Integrate a GitHub App](/github-app-integration) if you pull from private repositories.
-- Review [Security & Hardening](/security-hardening) to lock down secrets, TLS, and network access.
+- [Bootstrap your first admin](/bootstrapping) using the generated secret
+- [Integrate a GitHub App](/github-app-integration) if you pull from private repositories
+- Review [Security & Hardening](/security-hardening) to lock down secrets, TLS, and network access
 
-<Warning>
-Until formal release artifacts are published, you must build the server and agent binaries yourself. Plan a repeatable build process (CI pipeline or signed artifacts) before rolling Pullbase to production.
-</Warning>
+---
+
+## Building from source (optional)
+
+If you need to build Pullbase yourself (for development or custom builds):
+
+<Steps>
+<Step title="Prerequisites">
+  Install Go 1.22+ and Node.js 20+.
+</Step>
+
+<Step title="Clone and build">
+  ```bash
+  git clone https://github.com/pullbase/pullbase.git
+  cd pullbase
+  ./scripts/build-with-ui.sh
+  ```
+
+  The server binary (with embedded UI) is written to `bin/pullbase-server`.
+</Step>
+
+<Step title="Build the agent">
+  ```bash
+  cd agent
+  go build -o pullbase-agent
+  ```
+</Step>
+</Steps>

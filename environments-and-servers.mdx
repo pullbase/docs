@@ -133,12 +133,67 @@ curl -X POST http://localhost:8080/api/v1/environments/5/rollback \
 
 Pullbase creates a rollback event and updates the target commit. Agents reconcile to the specified commit on their next poll.
 
+## Webhook notifications
+
+Pullbase can send HTTP notifications when drift is detected or apply errors occur. Configure webhooks per environment.
+
+### Configure via API
+
+```bash
+curl -X PUT http://localhost:8080/api/v1/environments/5 \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "notification_webhook_url": "https://hooks.slack.com/services/xxx/yyy/zzz"
+  }'
+```
+
+### Webhook payload
+
+```json
+{
+  "event": "drift_detected",
+  "environment_id": 5,
+  "environment_name": "staging",
+  "server_id": "web-01",
+  "commit_hash": "abc123...",
+  "timestamp": "2026-01-01T12:00:00Z",
+  "details": {
+    "has_drift": true,
+    "error_message": ""
+  }
+}
+```
+
+**Event types:**
+- `drift_detected`: Agent detected configuration drift
+- `apply_error`: Agent encountered an error applying configuration
+- `test`: Sent when testing the webhook endpoint
+
+### Test webhook
+
+Verify your webhook configuration before relying on it:
+
+```bash
+curl -X POST http://localhost:8080/api/v1/environments/5/test-webhook \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+### Retry behavior
+
+Failed webhook deliveries are retried 3 times with exponential backoff (1s, 2s, 4s). If all retries fail, the event is logged but not persisted for later retry.
+
+<Tip>
+Use HTTPS endpoints for webhooks. Pullbase validates TLS certificates by default.
+</Tip>
+
 ## Best practices
 
 - Use descriptive `server_id` values (for example, `prod-api-01`) to simplify searches.
 - Rotate agent tokens regularly; maintain at least two active tokens during rotation to avoid downtime.
 - Keep environment branches protected and enforce pull-request reviews.
 - Tag production commits so rollbacks are easy to target.
+- Configure webhook notifications for critical environments to get alerted on drift.
 
 <Tip>
 Store environment metadata (repo URL, branch, deploy path) in a configuration management repo to reproduce Pullbase configuration declaratively.

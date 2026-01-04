@@ -5,12 +5,16 @@ description: "Create the first admin, onboard additional users, and understand P
 
 Pullbase ships without default credentials. Use the bootstrap secret to create the first administrator, then manage users through the CLI, API, or web UI.
 
+<Info>
+For a more detailed walkthrough of authentication and user management, see the [CLI Guide](/guides/pullbasectl#authentication).
+</Info>
+
 ## Bootstrap workflow
 
 <Steps>
 <Step title="Retrieve the bootstrap secret">
   ```bash
-  docker compose exec pullbase cat /app/config/bootstrap-admin-secret.txt
+  docker compose exec central-server cat /app/secrets/bootstrap.secret
   ```
   <Warning>
   The secret is single-use. Copy it carefully and avoid storing it in plaintext documents.
@@ -19,9 +23,9 @@ Pullbase ships without default credentials. Use the bootstrap secret to create t
 
 <Step title="Run the bootstrap command">
   ```bash
-  docker compose exec pullbase pullbasectl auth bootstrap-admin \
+  docker compose exec central-server pullbasectl auth bootstrap-admin \
     --server-url http://localhost:8080 \
-    --bootstrap-secret-file /app/config/bootstrap-admin-secret.txt \
+    --bootstrap-secret-file /app/secrets/bootstrap.secret \
     --username admin_user \
     --password 'ChangeMeNow123!'
   ```

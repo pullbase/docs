@@ -1,9 +1,17 @@
 ---
-title: "Container Deployment"
-description: "Run Pullbase using the official Docker images."
+title: "Server Container Deployment"
+description: "Run the Pullbase central server using Docker or container orchestrators."
 ---
 
-Pullbase publishes container images for the central server (`pullbaseio/pullbase`) and the agent (`pullbaseio/pullbase-agent`). This guide shows how to deploy them with Docker Compose, but the same environment variables apply if you run the images under Kubernetes, Nomad, or another orchestrator.
+This guide covers deploying the **Pullbase central server** using containers. The central server coordinates environments, monitors Git repositories, and serves the web dashboard.
+
+<Warning>
+**Agents should run natively on your Linux servers, not in containers.** Container agents require privileged access and have significant limitations. See [Agent Operations](/agent-operations) for native agent installation.
+
+This page is for deploying the **central server only**.
+</Warning>
+
+Pullbase publishes a container image for the central server (`pullbaseio/pullbase`). This guide shows how to deploy it with Docker Compose, but the same environment variables apply if you run the image under Kubernetes, Nomad, or another orchestrator.
 
 ## Prerequisites
 
@@ -119,9 +127,33 @@ ENV
 </Step>
 </Steps>
 
-## TLS termination
+## TLS configuration
 
-Pullbase runs on HTTP internally. For production deployments, place it behind a reverse proxy that handles TLS:
+Pullbase supports two approaches for TLS in production.
+
+### Option 1: Native TLS
+
+Enable native TLS by adding these environment variables to your Compose file:
+
+```yaml
+environment:
+  PULLBASE_TLS_ENABLED: "true"
+  PULLBASE_TLS_CERT_PATH: /config/server.crt
+  PULLBASE_TLS_KEY_PATH: /config/server.key
+```
+
+Mount your certificates in the config volume:
+
+```yaml
+volumes:
+  - ./config:/config:ro  # Contains server.crt, server.key, github-app.pem
+```
+
+For development, you can start the server with `--generate-dev-certs` to auto-generate self-signed certificates.
+
+### Option 2: Reverse proxy
+
+For existing infrastructure, place Pullbase behind a reverse proxy that handles TLS:
 
 ### NGINX example
 
@@ -152,7 +184,7 @@ server {
 ```yaml
 # Add to docker-compose.yml
 traefik:
-  image: traefik:v3.0
+  image: traefik:v3.6.2
   command:
     - "--providers.docker=true"
     - "--entrypoints.websecure.address=:443"
@@ -189,7 +221,18 @@ Using Amazon RDS, Azure Database for PostgreSQL, or another managed service?
 
 ## Agent containers
 
-Use the `pullbaseio/pullbase-agent` image to deploy agents as containers.
+<Warning>
+**Container agents are for development and testing only.** For production servers, install the native agent binary using the [install script](/agent-operations#one-liner-install-script-recommended) or [manual systemd setup](/agent-operations#manual-systemd-setup).
+</Warning>
+
+The container agent requires mounting the host filesystem and granting extensive privileges to manage packages and services. This approach has significant limitations:
+
+- Requires `privileged: true` or extensive Linux capabilities
+- Package manager detection may fail without proper mounts
+- Service management requires host D-Bus socket access
+- Adds container runtime as a dependency
+
+If you still need to run the agent as a container (e.g., for local development):
 
 ```yaml docker-compose-agent.yml
 services:
@@ -197,6 +240,7 @@ services:
     image: pullbaseio/pullbase-agent:latest
     restart: unless-stopped
     network_mode: host
+    privileged: true
     environment:
       SERVER_ID: web-01
       CENTRAL_SERVER_URL: https://pullbase.example.com
@@ -206,13 +250,11 @@ services:
     volumes:
       - /etc/pullbase/certs:/certs:ro
       - /:/host:rw
+      - /run/systemd/system:/run/systemd/system:ro
+      - /var/run/dbus:/var/run/dbus:ro
 ```
 
-- Mount the host filesystem so the agent can call package managers and manage services.
-- Provide the CA bundle required to verify your reverse proxy's TLS certificate.
-- For hosts that require package management or service supervision, prefer the native agent binary instead of the container form.
-
-See [Agent Operations](/agent-operations) for detailed configuration options.
+See [Agent Operations](/agent-operations) for the recommended native installation methods.
 
 ## Upgrades
 
