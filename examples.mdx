@@ -372,7 +372,7 @@ files:
 
   - path: /etc/nginx/sites-enabled/app
     content: |
-      # Symlink managed by Pullbase - just use include
+      # Include directive pointing to the full config
       include /etc/nginx/sites-available/app;
     mode: "0644"
     reloadService: nginx
