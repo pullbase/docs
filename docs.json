@@ -26,8 +26,8 @@
             "group": "Setup",
             "pages": [
               "installation",
-              "deployment-container",
               "deployment-bare-metal",
+              "deployment-container",
               "bootstrapping",
               "github-app-integration",
               "configuration-repository"
@@ -39,8 +39,15 @@
               "environments-and-servers",
               "agent-operations",
               "web-ui",
+              "guides/pullbasectl",
               "security-hardening",
               "operations-troubleshooting"
+            ]
+          },
+          {
+            "group": "Examples",
+            "pages": [
+              "examples"
             ]
           }
         ]
@@ -92,7 +99,7 @@
   },
   "footer": {
     "socials": {
-      "github": "https://github.com/pullbaseio/pullbase"
+      "github": "https://github.com/pullbase/pullbase"
     }
   }
 }

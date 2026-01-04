@@ -8,7 +8,8 @@ Operating Pullbase involves monitoring service health, responding to drift, and 
 ## Health checks
 
 - **API health:** `curl http://localhost:8080/api/v1/healthz`
-- **Database:** `docker compose exec db pg_isready -U pullbaseuser -d pullbasedb`
+- **Database (SQLite):** Check the database file exists and is accessible
+- **Database (PostgreSQL):** `docker compose exec db pg_isready -U pullbaseuser -d pullbasedb`
 - **Web UI:** Sign in and confirm the dashboard loads recent activity.
 - **Agents:** List servers and check `last_timestamp` in status history via CLI or UI.
 
@@ -22,7 +23,7 @@ Operating Pullbase involves monitoring service health, responding to drift, and 
   </Card>
   <Card title="Weekly" icon="rotate">
     - Rotate admin tokens or ensure expiration dates are set
-    - Back up the PostgreSQL database
+    - Back up the database (SQLite file or PostgreSQL dump)
     - Verify TLS certificates (at reverse proxy) aren't approaching expiry
   </Card>
   <Card title="Monthly" icon="shield-halved">
@@ -65,7 +66,8 @@ Operating Pullbase involves monitoring service health, responding to drift, and 
 
   <Accordion title="Database migration errors">
     - Review container logs around startup for SQL errors.
-    - Migrations run automatically; check for schema drift caused by manual database edits.
+    - Migrations run automatically for both SQLite and PostgreSQL.
+    - Check for schema drift caused by manual database edits.
     - Restore from backup if migrations fail due to corruption.
   </Accordion>
 
@@ -106,6 +108,12 @@ journalctl -u pullbase-agent --since "1 hour ago"
   ```
 </Step>
 <Step title="Capture database snapshot">
+  **SQLite:**
+  ```bash
+  cp /data/pullbase.db pullbase-$(date +%F).db
+  ```
+  
+  **PostgreSQL:**
   ```bash
   docker compose exec db \
     pg_dump -U pullbaseuser pullbasedb \
@@ -119,16 +127,18 @@ journalctl -u pullbase-agent --since "1 hour ago"
 If you need a clean slate (lab environments):
 
 1. Stop services: `docker compose down`
-2. Remove volumes **only if you accept data loss**: `docker volume rm pullbase_postgres_data`
+2. Remove data **only if you accept data loss**:
+   - **SQLite:** `docker volume rm pullbase_pullbase_data` or delete the database file
+   - **PostgreSQL:** `docker volume rm pullbase_postgres_data`
 3. Start again: `docker compose up -d`
 
 <Warning>
-Removing the database volume wipes environments, servers, tokens, and audit history. Always back up before destructive operations.
+Removing the database wipes environments, servers, tokens, and audit history. Always back up before destructive operations.
 </Warning>
 
 ## Getting help
 
-- Review [GitHub issues](https://github.com/pullbaseio/pullbase/issues) for known bugs.
+- Review [GitHub issues](https://github.com/pullbase/pullbase/issues) for known bugs.
 - Collect the diagnostic bundle above before filing a bug report.
 - Provide Pullbase version and deployment details.
 

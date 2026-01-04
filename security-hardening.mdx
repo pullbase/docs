@@ -12,9 +12,30 @@ Pullbase manages critical infrastructure. Follow these guidelines to reduce risk
 - Rotate agent tokens regularly. Tokens are hashed at rest, but compromised tokens allow full configuration access for that server.
 - Use unique credentials per environment when possible.
 
-## TLS termination
+## TLS configuration
 
-Pullbase runs on HTTP internally. For production:
+Pullbase supports two approaches for securing connections:
+
+### Option 1: Native TLS
+
+Pullbase can handle TLS directly without a reverse proxy:
+
+```bash
+PULLBASE_TLS_ENABLED=true
+PULLBASE_TLS_CERT_PATH=/etc/pullbase/certs/server.crt
+PULLBASE_TLS_KEY_PATH=/etc/pullbase/certs/server.key
+```
+
+For development, use the `--generate-dev-certs` flag to auto-generate self-signed ECDSA P-256 certificates. **Never use self-signed certificates in production.**
+
+Native TLS is ideal for:
+- Simple deployments without existing reverse proxy infrastructure
+- Direct agent-to-server communication
+- Reduced architectural complexity
+
+### Option 2: Reverse proxy TLS termination
+
+For production environments with existing infrastructure:
 
 - Deploy a reverse proxy (NGINX, Traefik, Caddy, or cloud load balancer) in front of Pullbase.
 - Terminate TLS at the reverse proxy using CA-signed certificates.
@@ -60,12 +81,28 @@ Agents validate the TLS certificate of the Pullbase server:
 - Enforce strong passwords (12+ characters with complexity) and rotate admin credentials periodically.
 - Restrict CLI usage to secure workstations. Store admin tokens in environment variables only temporarily.
 - Monitor audit logs (stored in the `audit_log` table) for suspicious activity. Integrate with your SIEM by streaming logs from the container.
+- **CORS policy:** In production, only explicitly configured origins (`PULLBASE_CORS_ORIGINS`) and same-origin requests are allowed. Avoid setting `PULLBASE_ENV=development` in production—it enables permissive localhost origins.
 
 ## Database hardening
 
+Pullbase supports SQLite (default) and PostgreSQL. Choose hardening steps based on your deployment.
+
+### SQLite (single-instance deployments)
+
+- Store `pullbase.db` outside the container on a persistent volume with strict file permissions (`chmod 600`).
+- Schedule file-level backups (e.g., `sqlite3 pullbase.db ".backup /backups/pullbase-$(date +%Y%m%d).db"`).
+- Enable WAL mode for better concurrency: `PRAGMA journal_mode=WAL;` (applied automatically by Pullbase).
+- Keep the database file on fast local storage; network-attached storage may introduce latency.
+
+### PostgreSQL (high-availability deployments)
+
 - Enable TLS connections between Pullbase and PostgreSQL. Set `PULLBASE_DB_SSLMODE=require` or `PULLBASE_DB_SSLMODE=verify-full`.
 - Grant Pullbase a least-privilege Postgres role (ownership of the `pullbasedb` database only).
-- Schedule automated backups and test restore procedures. Without the database, you lose environment definitions, tokens, and drift history.
+- Schedule automated backups using `pg_dump` and test restore procedures.
+
+### General
+
+- Without the database, you lose environment definitions, tokens, and drift history. Test restores regularly.
 
 ## Network segmentation
 
@@ -80,9 +117,20 @@ Agents validate the TLS certificate of the Pullbase server:
 - Rotate agent tokens regularly. Create a new token, update the agent, then revoke the old token.
 - Monitor agent status for unexpected disconnections or authentication failures.
 
+## Webhook notification security
+
+When configuring notification webhooks for environments:
+
+- **Use HTTPS endpoints only.** Pullbase validates TLS certificates by default.
+- **Validate webhook source.** If your receiving service supports it, verify requests come from your Pullbase server's IP.
+- **Keep webhook URLs confidential.** Treat them like secrets; leaked URLs could be used for social engineering.
+- **Monitor webhook failures.** Failed deliveries may indicate network issues or compromised endpoints.
+
+Webhooks are retried 3 times with exponential backoff (1s, 2s, 4s). Configure alerts in your receiving service for gaps in expected notifications.
+
 ## Logging & monitoring
 
-- Forward container logs to your log aggregation platform.
+- Forward container logs to your log aggregation platform. Use `PULLBASE_LOG_FORMAT=json` for structured logging.
 - Collect agent logs (especially when running as systemd units) for drift diagnostics.
 - Monitor GitHub App rate limits and webhook delivery failures; increasing poll intervals or adjusting webhook retries can prevent throttling.
 - Consider adding synthetic checks that call `/api/v1/healthz` to detect API regressions.

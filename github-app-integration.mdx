@@ -45,11 +45,28 @@ You can start with public repositories (set `PULLBASE_GIT_ENABLED=false`). Add a
 <Step title="Capture credentials">
   After installation, record:
 
-  - **App ID**
-  - **App slug** (lowercase name of the app)
-  - **Installation ID** (per repository or organization)
-  - **Repository ID** (view via GitHub REST API: `GET /repos/{owner}/{repo}`)
-  - Download the **private key** (`.pem`)
+  - **App ID** — Found on the app's settings page under "About"
+  - **App slug** — Lowercase name in the app's URL (e.g., `pullbase-config` from `github.com/apps/pullbase-config`)
+  - **Installation ID** — Found in the URL after installing: `github.com/settings/installations/{installation_id}`
+  - **Repository ID** — Query via GitHub API (see below)
+  - **Private key** — Download the `.pem` file from "Private keys" section
+
+  **Finding the Repository ID:**
+
+  ```bash
+  # Using GitHub CLI
+  gh api /repos/{owner}/{repo} --jq '.id'
+  
+  # Example
+  gh api /repos/acme/infra-config --jq '.id'
+  # Output: 964854370
+  ```
+
+  Or via curl:
+
+  ```bash
+  curl -s https://api.github.com/repos/{owner}/{repo} | jq '.id'
+  ```
 </Step>
 </Steps>
 
@@ -70,6 +87,40 @@ Mount the private key into the container at the configured path:
 volumes:
   - ./config/github-app.pem:/config/github-app.pem:ro
 ```
+
+<Warning>
+**Private key security:**
+- Set restrictive permissions: `chmod 600 github-app.pem`
+- Never commit the `.pem` file to Git
+- Use Docker secrets or a secrets manager in production
+- The `:ro` mount flag ensures the container cannot modify the key
+</Warning>
+
+**Using Docker secrets (recommended for production):**
+
+```yaml
+services:
+  central-server:
+    image: pullbaseio/pullbase:latest
+    environment:
+      - PULLBASE_GITHUB_APP_PRIVATE_KEY_PATH=/run/secrets/github_app_key
+    secrets:
+      - github_app_key
+
+secrets:
+  github_app_key:
+    file: ./config/github-app.pem
+```
+
+### GitHub Enterprise Server
+
+For GitHub Enterprise Server (self-hosted), update the API base URL:
+
+```env
+PULLBASE_GITHUB_APP_API_BASE_URL=https://github.mycompany.com/api/v3
+```
+
+The app registration and installation process is the same, but use your GitHub Enterprise URL instead of `github.com`.
 
 ### Environment-level configuration
 

@@ -1,155 +1,228 @@
 ---
 title: "Quickstart"
-description: "Spin up Pullbase with Docker Compose and bootstrap your first environment in minutes."
+description: "Get Pullbase running and see your first servers come online in under 5 minutes."
 ---
 
-Pullbase ships as a Docker image. This guide walks you through running the central server with PostgreSQL, bootstrapping an admin account, and confirming the system is healthy.
+This guide gets you from zero to a working Pullbase setup with agents reporting status. By the end, you'll have:
+
+- A running Pullbase server with database
+- An admin account
+- Two demo agents reporting their status
+
+**Time estimate:** 5 minutes
 
 ## Prerequisites
 
-- Docker 24.0 or newer with the Compose plugin (`docker compose`)
-- Git (to clone the sample configuration repository)
-- Open ports 8080 (Pullbase API) and 5432 (PostgreSQL) on your host
-- A Unix-like shell (macOS, Linux, or WSL)
+- **Docker** 24.0+ with the Compose plugin (`docker compose`)
+- **Git** to clone the repository
+- A terminal (macOS, Linux, or WSL)
 
-<Note>
-Pullbase runs on HTTP internally. For production deployments, place it behind a reverse proxy (NGINX, Traefik, Caddy) that terminates TLS.
-</Note>
+<Warning>
+**This quickstart is for evaluation only.** It uses Docker to run demo agents for testing purposes.
 
-## Create a working directory
+For production:
+- Deploy the **central server** using Docker or [bare-metal](/deployment-bare-metal)
+- Install **agents natively** on your Linux servers using the [install script](/agent-operations#one-liner-install-script-recommended) — never run production agents in containers
+</Warning>
+
+## Step 1: Clone and start Pullbase
 
 ```bash
-mkdir pullbase-quickstart && cd pullbase-quickstart
-git clone https://github.com/pullbaseio/pullbase-config-examples.git configs
+git clone https://github.com/pullbase/pullbase.git
+cd pullbase
+docker compose up -d
 ```
 
-The `configs` repository contains sample environment definitions you can deploy while exploring Pullbase.
+This starts:
+- **PostgreSQL** database
+- **Pullbase server** (API + dashboard)
+- **Two demo agents** (test-server-1, test-server-2)
 
-## Compose file
+<Check>
+Wait for the stack to be healthy (about 60 seconds):
 
-Create `docker-compose.yml` with the minimal services required to run Pullbase locally:
-
-```yaml docker-compose.yml
-version: "3.9"
-services:
-  db:
-    image: postgres:16-alpine
-    environment:
-      POSTGRES_USER: pullbaseuser
-      POSTGRES_PASSWORD: pullbasepass
-      POSTGRES_DB: pullbasedb
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U pullbaseuser -d pullbasedb"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  pullbase:
-    image: pullbaseio/pullbase:latest
-    depends_on:
-      db:
-        condition: service_healthy
-    ports:
-      - "8080:8080"
-    environment:
-      # Database configuration
-      PULLBASE_DB_HOST: db
-      PULLBASE_DB_PORT: 5432
-      PULLBASE_DB_USER: pullbaseuser
-      PULLBASE_DB_PASSWORD: pullbasepass
-      PULLBASE_DB_NAME: pullbasedb
-      PULLBASE_DB_SSLMODE: disable
-      # Server configuration
-      PULLBASE_SERVER_PORT: 8080
-      PULLBASE_SERVER_HOST: 0.0.0.0
-      # Authentication
-      PULLBASE_JWT_SECRET: change-this-super-secret-key-please
-      PULLBASE_JWT_EXPIRY_HOURS: 24
-      # Webhook security
-      PULLBASE_WEBHOOK_SECRET_KEY: d5aaaf2f8d3f514a9e649416f3e62f007f878a049e5fc277d11c0003d1e24ff4
-      # Git integration (disable for quickstart)
-      PULLBASE_GIT_ENABLED: "false"
-
-volumes:
-  postgres_data:
+```bash
+docker compose ps
 ```
 
-<Info>
-The sample configuration disables Git integration for the quickstart. When you create environments via the API or UI, you'll specify repository details per-environment. For private repositories, configure a GitHub App as described in the GitHub App Integration guide.
-</Info>
+You should see all services with status `healthy` or `running`.
+</Check>
 
-## Start Pullbase
+## Step 2: Verify the server is running
 
-<Steps>
-<Step title="Launch the stack">
-  ```bash
-  docker compose up -d
-  ```
+```bash
+curl http://localhost:8080/api/v1/healthz
+```
 
-  <Check>
-  Verify the containers are healthy:
-  
-  ```bash
-  docker compose ps
-  ```
-  </Check>
-</Step>
+Expected output:
+```json
+{"status":"healthy","service":"pullbase-server"}
+```
 
-<Step title="Check health">
-  ```bash
-  curl http://localhost:8080/api/v1/healthz
-  ```
-  You should see `{"status":"healthy","service":"pullbase-server"}`.
-</Step>
+## Step 3: Bootstrap your admin account
 
-<Step title="Bootstrap the first admin">
-  Pullbase generates a one-time secret at `bootstrap-admin-secret.txt` inside the config directory.
-  
-  ```bash
-  docker compose exec pullbase cat /app/config/bootstrap-admin-secret.txt
-  ```
-  
-  Copy the secret (do not include trailing whitespace) and use the bundled CLI from inside the running container:
-  
-  ```bash
-  docker compose exec pullbase pullbasectl auth bootstrap-admin \
-    --server-url http://localhost:8080 \
-    --bootstrap-secret-file /app/config/bootstrap-admin-secret.txt \
-    --username admin_user \
-    --password 'ChangeMeNow123!'
-  ```
-  
-  The command returns a short-lived JWT you can use to sign in. Pullbase removes the bootstrap secret file automatically after a successful bootstrap.
-</Step>
+Pullbase generates a one-time bootstrap secret on first start. Retrieve it and create your admin:
 
-<Step title="Open the web UI">
-  Visit `http://localhost:8080` and sign in with the credentials you just created.
+```bash
+# Get the bootstrap secret
+docker compose exec central-server cat /app/secrets/bootstrap.secret
 
-  <Check>
-  You should see the dashboard. From here you can create environments and register servers.
-  </Check>
-</Step>
-</Steps>
+# Create admin (replace YOUR_SECRET with the value above)
+docker compose exec central-server pullbasectl auth bootstrap-admin \
+  --server-url http://localhost:8080 \
+  --bootstrap-secret "YOUR_SECRET" \
+  --username admin \
+  --password 'SecurePassword123!'
+```
 
-## Next steps
+<Check>
+You should see:
+```
+Admin bootstrap completed successfully.
+Username: admin
+Access token (store securely):
+eyJhbGciOiJIUzI1NiIs...
+```
+</Check>
+
+<Warning>
+Save the access token! You'll need it for CLI commands. The bootstrap secret is invalidated after use.
+</Warning>
+
+## Step 4: Open the dashboard
+
+Visit **http://localhost:8080** in your browser and sign in with:
+- Username: `admin`
+- Password: `SecurePassword123!` (or whatever you chose)
+
+<Check>
+You should see the Pullbase dashboard with:
+- A sidebar showing "Environments" and "Servers"
+- The demo environment and servers from the seeded data
+</Check>
+
+## Step 5: Watch agents come online
+
+Navigate to **Servers** in the sidebar. Within 60 seconds, you should see:
+
+| Server | Status | Last Seen |
+|--------|--------|-----------|
+| test-server-1 | Applied | Just now |
+| test-server-2 | Applied | Just now |
+
+The agents are pulling configuration from the demo environment and reporting their status.
+
+**Congratulations!** You have a working Pullbase installation.
+
+---
+
+## Next: Add your own server
+
+Now that you've seen Pullbase working, here's how to add a real server.
+
+### Option A: Using the UI
+
+1. Go to **Servers → Create Server**
+2. Enter a server ID (e.g., `web-01`) and name
+3. Select an environment
+4. Click **Create**
+5. Go to the server's **Tokens** tab and create a token
+6. Copy the install command and run it on your target server
+
+### Option B: Using the CLI
+
+```bash
+# Set your server URL and token
+export PULLBASE_URL=http://localhost:8080
+export PULLBASE_TOKEN=<your-access-token-from-step-3>
+
+# Create a server
+docker compose exec central-server pullbasectl servers create \
+  --server-url $PULLBASE_URL \
+  --admin-token $PULLBASE_TOKEN \
+  --id web-01 \
+  --name "Web Server 01" \
+  --environment-id 1
+
+# Create an agent token
+docker compose exec central-server pullbasectl tokens create \
+  --server-url $PULLBASE_URL \
+  --admin-token $PULLBASE_TOKEN \
+  --server-id web-01 \
+  --description "initial token"
+```
+
+The token output includes an install command you can run on your target server.
+
+### Install the agent on your server
+
+On your target Linux server (VM, bare-metal, or cloud instance):
+
+```bash
+curl -fsSL "http://YOUR_PULLBASE_HOST:8080/api/v1/servers/web-01/install-script?token=YOUR_TOKEN" | sudo bash
+```
+
+<Warning>
+For production, always use HTTPS. See [Security Hardening](/security-hardening) for TLS setup.
+</Warning>
+
+---
+
+## What's next?
 
 <CardGroup cols={2}>
-  <Card title="Architecture overview" icon="diagram-nested" href="/architecture-overview">
-    Learn how the central server, agents, and Git repository stay in sync.
+  <Card title="Create environments" icon="layer-group" href="/environments-and-servers">
+    Group servers and link them to Git repositories
   </Card>
-  <Card title="Manage environments" icon="server" href="/environments-and-servers">
-    Create your own environments and register servers with agent tokens.
+  <Card title="Write config.yaml" icon="file-code" href="/configuration-repository">
+    Define packages, services, and files to manage
   </Card>
-  <Card title="Secure Pullbase" icon="shield-halved" href="/security-hardening">
-    Harden secrets, TLS, and admin workflows for production.
+  <Card title="Production deployment" icon="server" href="/deployment-bare-metal">
+    Deploy Pullbase on real infrastructure with TLS
   </Card>
-  <Card title="CLI reference" icon="terminal" href="/reference/cli">
-    Automate bootstrap, user management, and GitHub App validation.
+  <Card title="CLI Guide" icon="terminal" href="/guides/pullbasectl">
+    Master the CLI for automation and workflows
   </Card>
 </CardGroup>
 
-<Tip>
-When you update `docker-compose.yml` with real secrets or GitHub App credentials, run `docker compose up -d --force-recreate` to apply changes without losing your database volume.
-</Tip>
+---
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="docker compose up fails">
+    - Ensure Docker is running: `docker info`
+    - Check if port 8080 is available: `lsof -i :8080`
+    - Check if port 5432 is available: `lsof -i :5432`
+    - View logs: `docker compose logs -f`
+  </Accordion>
+  <Accordion title="Bootstrap secret not found">
+    The secret file is created on first boot. Wait 30 seconds after `docker compose up` and try again:
+    ```bash
+    docker compose exec central-server cat /app/secrets/bootstrap.secret
+    ```
+  </Accordion>
+  <Accordion title="Agents not showing up">
+    - Check agent logs: `docker compose logs test-server-1`
+    - Agents report every 60 seconds — wait and refresh
+    - Verify the central-server is healthy: `curl http://localhost:8080/api/v1/healthz`
+  </Accordion>
+  <Accordion title="Cannot access localhost:8080">
+    - Ensure the central-server is running: `docker compose ps`
+    - Check for errors: `docker compose logs central-server`
+    - Try the healthcheck: `docker compose exec central-server wget -qO- http://localhost:8080/api/v1/healthz`
+  </Accordion>
+</AccordionGroup>
+
+## Clean up
+
+To stop and remove all containers and data:
+
+```bash
+docker compose down -v
+```
+
+This removes:
+- All containers
+- The PostgreSQL data volume
+- Generated certificates

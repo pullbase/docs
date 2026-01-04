@@ -3,11 +3,23 @@ title: "API Reference"
 description: "REST API endpoints for the Pullbase server."
 ---
 
-All endpoints are served over HTTP (use a reverse proxy for TLS in production). Admin and viewer accounts authenticate with bearer tokens, while agents use their agent token.
+Pullbase supports native TLS. Enable it with `PULLBASE_TLS_ENABLED=true` and provide certificate paths. Alternatively, use a reverse proxy for TLS termination. Admin and viewer accounts authenticate with bearer tokens, while agents use their agent token.
 
 <BaseUrl>
-http://pullbase.example.com/api/v1
+https://pullbase.example.com/api/v1
 </BaseUrl>
+
+## Interactive API Documentation
+
+Pullbase includes an interactive Swagger UI for exploring and testing the API.
+
+### `GET /swagger/*`
+
+Serves the interactive Swagger UI documentation. Access it at `https://pullbase.example.com/swagger/index.html`.
+
+<Tip>
+The Swagger UI is auto-generated from code annotations and always reflects the current API implementation.
+</Tip>
 
 ## Public endpoints
 
@@ -15,13 +27,73 @@ These endpoints do not require authentication.
 
 ### `GET /healthz`
 
-Returns the server health status.
+Kubernetes-style liveness probe. Returns healthy if the service is running and the database is reachable.
 
 <ResponseExample>
 ```json Success
 {
   "status": "healthy",
-  "service": "pullbase-server"
+  "service": "pullbase-server",
+  "checks": {
+    "database": {
+      "status": "healthy",
+      "latency_ms": 2
+    }
+  }
+}
+```
+
+```json Degraded (high latency)
+{
+  "status": "degraded",
+  "service": "pullbase-server",
+  "checks": {
+    "database": {
+      "status": "degraded",
+      "latency_ms": 1500
+    }
+  }
+}
+```
+</ResponseExample>
+
+### `GET /readyz`
+
+Kubernetes-style readiness probe. Returns healthy if the service is ready to accept traffic, including database connectivity and migration status.
+
+<ResponseExample>
+```json Success
+{
+  "status": "healthy",
+  "service": "pullbase-server",
+  "checks": {
+    "database": {
+      "status": "healthy",
+      "latency_ms": 3
+    },
+    "migrations": {
+      "status": "healthy",
+      "version": 22
+    }
+  }
+}
+```
+
+```json Unhealthy (dirty migration)
+{
+  "status": "unhealthy",
+  "service": "pullbase-server",
+  "checks": {
+    "database": {
+      "status": "healthy",
+      "latency_ms": 2
+    },
+    "migrations": {
+      "status": "unhealthy",
+      "version": 22,
+      "error": "migration is dirty (failed or incomplete)"
+    }
+  }
 }
 ```
 </ResponseExample>
@@ -133,7 +205,7 @@ Returns the authenticated user. Requires `Authorization: Bearer <token>`.
 
 ### `GET /environments`
 
-<ListResponse>
+<ResponseExample>
 ```json
 [
   {
@@ -144,11 +216,12 @@ Returns the authenticated user. Requires `Authorization: Bearer <token>`.
     "deploy_path": "environments/staging/config.yaml",
     "auto_reconcile": true,
     "status": "active",
-    "deployed_commit": "8a9d3c..."
+    "deployed_commit": "8a9d3c...",
+    "notification_webhook_url": "https://hooks.slack.com/..."
   }
 ]
 ```
-</ListResponse>
+</ResponseExample>
 
 ### `POST /environments`
 
@@ -163,6 +236,7 @@ curl -X POST $BASE_URL/environments \
     "repo_url": "https://github.com/your-org/configs.git",
     "branch": "main",
     "deploy_path": "environments/staging/config.yaml",
+    "notification_webhook_url": "https://hooks.slack.com/...",
     "github_app": {
       "installation_id": 89968159,
       "repository_id": 964854370,
@@ -189,7 +263,7 @@ Returns a single environment by ID.
 
 ### `PUT /environments/{environmentID}`
 
-Updates an environment.
+Updates an environment. Supports updating `notification_webhook_url` for webhook notifications.
 
 ### `DELETE /environments/{environmentID}`
 
@@ -211,7 +285,7 @@ curl -X POST $BASE_URL/environments/5/rollback \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{
-    "to_commit": "8a9d3cba2f...",
+    "target_commit": "8a9d3cba2f...",
     "reason": "Reverting faulty nginx config"
   }'
 ```
@@ -221,9 +295,144 @@ curl -X POST $BASE_URL/environments/5/rollback \
 
 Lists rollback events for an environment.
 
+<ParamField query="limit" type="integer" default="20">
+Maximum number of rollbacks to return (1-100).
+</ParamField>
+<ParamField query="offset" type="integer" default="0">
+Pagination offset.
+</ParamField>
+
+<ResponseExample>
+```json Success
+{
+  "rollbacks": [
+    {
+      "id": 42,
+      "environment_id": 5,
+      "from_commit": "f6e5d4c...",
+      "to_commit": "a1b2c3d...",
+      "initiated_by": "admin_user",
+      "status": "completed",
+      "reason": "Reverting broken nginx config",
+      "created_at": "2025-01-15T12:30:00Z",
+      "completed_at": "2025-01-15T12:31:00Z"
+    }
+  ],
+  "limit": 20,
+  "offset": 0
+}
+```
+</ResponseExample>
+
 ### `GET /environments/{id}/commits`
 
 Returns available commits for rollback selection.
+
+<ParamField query="limit" type="integer" default="20">
+Maximum number of commits to return (1-50).
+</ParamField>
+
+<ResponseExample>
+```json Success
+{
+  "commits": [
+    {
+      "hash": "a1b2c3d...",
+      "applied_at": "2025-01-14T10:00:00Z",
+      "message": "Update nginx config for production"
+    },
+    {
+      "hash": "b2c3d4e...",
+      "applied_at": "2025-01-13T15:30:00Z",
+      "message": "Add rate limiting rules"
+    }
+  ],
+  "limit": 20
+}
+```
+</ResponseExample>
+
+### `GET /rollbacks/{id}`
+
+Returns the status of a specific rollback operation.
+
+<ParamField path="id" type="integer" required>
+Rollback event ID.
+</ParamField>
+
+<ResponseExample>
+```json Success
+{
+  "id": 42,
+  "environment_id": 5,
+  "from_commit": "f6e5d4c...",
+  "to_commit": "a1b2c3d...",
+  "initiated_by": "admin_user",
+  "status": "completed",
+  "reason": "Reverting broken nginx config",
+  "created_at": "2025-01-15T12:30:00Z",
+  "completed_at": "2025-01-15T12:31:00Z"
+}
+```
+
+```json In progress
+{
+  "id": 43,
+  "environment_id": 5,
+  "from_commit": "a1b2c3d...",
+  "to_commit": "c3d4e5f...",
+  "initiated_by": "api",
+  "status": "in_progress",
+  "reason": "Rolling back to stable release",
+  "created_at": "2025-01-15T14:00:00Z"
+}
+```
+
+```json Failed
+{
+  "id": 44,
+  "environment_id": 5,
+  "from_commit": "x1y2z3a...",
+  "to_commit": "invalid...",
+  "initiated_by": "admin_user",
+  "status": "failed",
+  "reason": "Emergency rollback",
+  "created_at": "2025-01-15T16:00:00Z",
+  "completed_at": "2025-01-15T16:00:05Z",
+  "error_message": "Target commit not found in repository"
+}
+```
+</ResponseExample>
+
+**Rollback statuses:**
+- `pending` - Rollback created but not yet started
+- `in_progress` - Agents are applying the rollback
+- `completed` - All agents have applied the target commit
+- `failed` - Rollback failed (check `error_message`)
+
+### `POST /environments/{id}/test-webhook`
+
+Sends a test webhook notification to verify the configured webhook URL.
+
+<RequestExample>
+```bash cURL
+curl -X POST $BASE_URL/environments/5/test-webhook \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+</RequestExample>
+
+<ResponseExample>
+```json Success
+{
+  "success": true,
+  "message": "Test webhook sent successfully"
+}
+```
+</ResponseExample>
+
+### `GET /environments/health`
+
+Returns health status for all environments.
 
 ## Servers
 
@@ -252,8 +461,8 @@ curl -X POST $BASE_URL/servers \
   },
   "token": "pbt_9BFz...",
   "installation_info": {
-    "instructions": "Configure AGENT_TOKEN with this value when deploying the agent.",
-    "example_cmd": "docker run --rm pullbaseio/pullbase-agent:latest"
+    "instructions": "Run the install script on your target server:",
+    "install_command": "curl -fsSL 'https://pullbase.example.com/api/v1/servers/web-01/install-script?token=pbt_9BFz...' | sudo bash"
   }
 }
 ```
@@ -263,9 +472,13 @@ curl -X POST $BASE_URL/servers \
 
 Lists all servers with their latest status.
 
+<ParamField query="environment_id" type="integer">
+Filter servers by environment ID.
+</ParamField>
+
 ### `GET /servers/{serverID}`
 
-Returns a single server by ID.
+Returns a single server by ID, including last status, agent version, and drift state.
 
 ### `PUT /servers/{serverID}`
 
@@ -281,7 +494,66 @@ Toggles auto-reconcile for a server.
 
 ### `GET /servers/{serverID}/status/history`
 
-Returns chronological status entries including commit hash, drift flag, and timestamp.
+Returns chronological status entries including commit hash, drift flag, agent version, and timestamp.
+
+### `GET /servers/{serverID}/drift`
+
+Returns detailed drift information for a server, including which packages, services, or files have drifted from the desired state.
+
+<ResponseExample>
+```json Drifted
+{
+  "server_id": "web-01",
+  "server_name": "Production Web 1",
+  "is_drifted": true,
+  "commit_hash": "a1b2c3d...",
+  "detected_at": "2025-01-15T12:30:00Z",
+  "drift_details": {
+    "packages": [
+      {"name": "nginx", "expected": "1.24.0", "actual": "1.22.0"}
+    ],
+    "files": [
+      {"path": "/etc/nginx/nginx.conf", "status": "modified"}
+    ]
+  }
+}
+```
+
+```json Not drifted
+{
+  "server_id": "web-01",
+  "server_name": "Production Web 1",
+  "is_drifted": false
+}
+```
+</ResponseExample>
+
+### `GET /servers/{serverID}/install-script`
+
+Returns a shell script for installing the agent on the target server.
+
+<ParamField query="token" type="string" required>
+Agent token for authentication.
+</ParamField>
+<ParamField query="version" type="string" default="latest">
+Agent version to install.
+</ParamField>
+<ParamField query="ca_cert" type="string">
+Base64-encoded CA certificate for custom TLS.
+</ParamField>
+
+<RequestExample>
+```bash cURL
+curl -fsSL "$BASE_URL/servers/web-01/install-script?token=pbt_xxx" | sudo bash
+```
+</RequestExample>
+
+The script:
+- Downloads the agent binary from GitHub releases
+- Creates a `pullbase` service user
+- Configures `/etc/pullbase/agent.env`
+- Installs a hardened systemd service
+- Starts the agent
 
 ### Token management
 
@@ -293,6 +565,87 @@ Returns chronological status entries including commit hash, drift flag, and time
 
 Returns installation instructions for the agent.
 
+## Token expiration
+
+### `GET /tokens/expiring`
+
+Returns tokens that are expiring within a specified number of days.
+
+<ParamField query="days" type="integer" default="7">
+Number of days to look ahead (max 365).
+</ParamField>
+
+<RequestExample>
+```bash cURL
+curl -H "Authorization: Bearer $ADMIN_TOKEN" \
+  "$BASE_URL/tokens/expiring?days=14"
+```
+</RequestExample>
+
+<ResponseExample>
+```json Success
+{
+  "tokens": [
+    {
+      "token_id": 5,
+      "server_id": "web-01",
+      "server_name": "Production Web 1",
+      "environment_name": "production",
+      "description": "initial token",
+      "expires_at": "2025-01-20T12:00:00Z",
+      "days_until_expiry": 5
+    }
+  ],
+  "count": 1
+}
+```
+</ResponseExample>
+
+## Config validation
+
+### `POST /validate-config`
+
+Validates a `config.yaml` file before committing to Git.
+
+<RequestExample>
+```bash cURL
+curl -X POST $BASE_URL/validate-config \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: text/yaml" \
+  --data-binary @config.yaml
+```
+</RequestExample>
+
+<ResponseExample>
+```json Valid config
+{
+  "valid": true,
+  "errors": []
+}
+```
+
+```json Invalid config
+{
+  "valid": false,
+  "errors": [
+    {
+      "field": "packages[0].state",
+      "message": "Invalid package state 'installed'. Must be one of: present, latest, absent",
+      "line": 5,
+      "column": 12
+    }
+  ]
+}
+```
+</ResponseExample>
+
+Validates:
+- YAML syntax with line/column error positions
+- Package states: `present`, `latest`, `absent`
+- Service states: `running`, `stopped`
+- File modes: valid octal (e.g., `0644`, `0755`)
+- Service managers: `systemd`, `supervisor`, `supervisord`, `docker-supervisor`, `openrc`
+
 ## User management
 
 ### `GET /users`
@@ -300,7 +653,7 @@ Returns installation instructions for the agent.
 Supports pagination and role filtering.
 
 <ParamField query="limit" type="integer" default="100">
-Maximum number of users per page (1–500).
+Maximum number of users per page (1-500).
 </ParamField>
 <ParamField query="offset" type="integer" default="0">
 Pagination offset.
@@ -384,11 +737,14 @@ curl -X PUT $BASE_URL/agent/status \
   -d '{
     "commit_hash": "8a9d3c...",
     "is_drifted": false,
-    "status": "applied",
-    "error_message": null
+    "status": "Applied",
+    "error_message": null,
+    "agent_version": "v1.0.0"
   }'
 ```
 </RequestExample>
+
+The `agent_version` field is optional but recommended. It's displayed in the UI and helps track agent deployments.
 
 ## Webhooks
 
@@ -397,6 +753,182 @@ curl -X PUT $BASE_URL/agent/status \
 Receives webhooks from Git providers. Currently supports `github`.
 
 The webhook payload is validated using HMAC signature verification with `PULLBASE_WEBHOOK_SECRET_KEY`.
+
+## Notification webhooks
+
+Pullbase can send webhook notifications when drift is detected or errors occur during reconciliation.
+
+### Configuration
+
+Set `notification_webhook_url` when creating or updating an environment:
+
+```bash
+curl -X PUT $BASE_URL/environments/5 \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "notification_webhook_url": "https://hooks.slack.com/services/..."
+  }'
+```
+
+### Webhook payload
+
+```json
+{
+  "event": "drift_detected",
+  "timestamp": "2025-01-15T10:30:00Z",
+  "environment_id": 5,
+  "environment_name": "production",
+  "server_id": "web-01",
+  "server_name": "Web Server 1",
+  "details": "File /etc/nginx/nginx.conf content differs from desired state",
+  "commit_hash": "abc123"
+}
+```
+
+**Event types:**
+- `drift_detected` - Agent detected configuration drift
+- `apply_error` - Error occurred during reconciliation
+- `test` - Test webhook from the UI or API
+
+### Retry behavior
+
+Failed webhook deliveries are retried up to 3 times with exponential backoff (1s, 2s, 4s delays).
+
+### `GET /webhook-statuses`
+
+Returns the current webhook delivery status for all environments.
+
+<ResponseExample>
+```json Success
+{
+  "webhook_statuses": {
+    "5": {
+      "last_delivery": "2025-01-15T12:30:00Z",
+      "last_status": 200,
+      "consecutive_failures": 0
+    }
+  }
+}
+```
+</ResponseExample>
+
+## Web UI
+
+Pullbase includes an embedded web dashboard accessible at `/ui/`. The UI is a single-page application (SPA) that communicates with the API.
+
+### Routes
+
+| Path | Description |
+|------|-------------|
+| `/` | Redirects to `/ui/` |
+| `/ui/` | Dashboard home (requires authentication) |
+| `/ui/login` | Login page |
+| `/ui/servers` | Server list and management |
+| `/ui/environments` | Environment list and management |
+| `/ui/assets/*` | Static assets (JS, CSS, fonts) |
+
+### Authentication
+
+The web UI uses cookie-based session authentication:
+
+1. User submits credentials to `POST /ui/login`
+2. Server validates and sets `session_token` cookie
+3. Subsequent requests include the cookie automatically
+4. Protected routes redirect to `/ui/login` if unauthenticated
+
+<Tip>
+The web UI uses the same API endpoints documented above. You can use the Swagger UI at `/swagger/` to explore and test endpoints interactively.
+</Tip>
+
+## Metrics
+
+Pullbase provides metrics endpoints for monitoring drift events, reconciliation success rates, and agent connectivity.
+
+### `GET /metrics/drift`
+
+Returns drift event metrics over a specified time period.
+
+<ParamField query="days" type="integer" default="7">
+Number of days to include (1-90).
+</ParamField>
+
+<ResponseExample>
+```json Success
+{
+  "period": "7 days",
+  "total_events": 12,
+  "time_series": [
+    {"timestamp": "2025-01-09T00:00:00Z", "value": 2},
+    {"timestamp": "2025-01-10T00:00:00Z", "value": 0},
+    {"timestamp": "2025-01-11T00:00:00Z", "value": 3},
+    {"timestamp": "2025-01-12T00:00:00Z", "value": 1},
+    {"timestamp": "2025-01-13T00:00:00Z", "value": 4},
+    {"timestamp": "2025-01-14T00:00:00Z", "value": 0},
+    {"timestamp": "2025-01-15T00:00:00Z", "value": 2}
+  ]
+}
+```
+</ResponseExample>
+
+### `GET /metrics/reconciliation`
+
+Returns reconciliation success/failure metrics over time.
+
+<ParamField query="days" type="integer" default="7">
+Number of days to include (1-90).
+</ParamField>
+
+<ResponseExample>
+```json Success
+{
+  "period": "7 days",
+  "total_applied": 145,
+  "total_failed": 3,
+  "success_rate": 97.97,
+  "time_series": [
+    {"timestamp": "2025-01-09T00:00:00Z", "value": 20},
+    {"timestamp": "2025-01-10T00:00:00Z", "value": 22},
+    {"timestamp": "2025-01-11T00:00:00Z", "value": 18},
+    {"timestamp": "2025-01-12T00:00:00Z", "value": 21},
+    {"timestamp": "2025-01-13T00:00:00Z", "value": 25},
+    {"timestamp": "2025-01-14T00:00:00Z", "value": 19},
+    {"timestamp": "2025-01-15T00:00:00Z", "value": 20}
+  ]
+}
+```
+</ResponseExample>
+
+### `GET /metrics/connectivity`
+
+Returns agent online/offline status for all servers.
+
+<ResponseExample>
+```json Success
+{
+  "total_agents": 5,
+  "online_agents": 4,
+  "offline_agents": 1,
+  "stale_threshold": "5m0s",
+  "agent_statuses": [
+    {
+      "server_id": "web-01",
+      "server_name": "Production Web 1",
+      "last_seen": "2025-01-15T12:34:00Z",
+      "is_online": true,
+      "status": "Applied"
+    },
+    {
+      "server_id": "api-01",
+      "server_name": "API Server",
+      "last_seen": "2025-01-15T12:00:00Z",
+      "is_online": false,
+      "status": "Applied"
+    }
+  ]
+}
+```
+</ResponseExample>
 
 ## Error handling
 
@@ -408,5 +940,5 @@ The webhook payload is validated using HMAC signature verification with `PULLBAS
 - `500 Internal Server Error` – unexpected server error (check server logs)
 
 <Tip>
-For production, always use HTTPS via a reverse proxy. The examples above use HTTP for clarity.
+For production, enable native TLS (`PULLBASE_TLS_ENABLED=true`) or use HTTPS via a reverse proxy.
 </Tip>
