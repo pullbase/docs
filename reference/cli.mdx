@@ -62,7 +62,7 @@ Password for the new admin (minimum 12 characters).
 ```bash
 pullbasectl auth bootstrap-admin \
   --server-url http://localhost:8080 \
-  --bootstrap-secret-file /app/config/bootstrap-admin-secret.txt \
+  --bootstrap-secret-file /app/secrets/bootstrap.secret \
   --username admin_user \
   --password 'ChangeMeNow123!'
 ```
