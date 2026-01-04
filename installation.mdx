@@ -97,9 +97,9 @@ services:
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
-      POSTGRES_USER: pullbaseuser
-      POSTGRES_PASSWORD: pullbasepass
-      POSTGRES_DB: pullbasedb
+      POSTGRES_USER: ${PULLBASE_DB_USER:-pullbaseuser}
+      POSTGRES_PASSWORD: ${PULLBASE_DB_PASSWORD}
+      POSTGRES_DB: ${PULLBASE_DB_NAME:-pullbasedb}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
