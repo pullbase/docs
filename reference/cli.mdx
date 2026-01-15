@@ -208,8 +208,13 @@ Server ID to delete.
 Skip confirmation prompt.
 </ParamField>
 
+<Note>
+Non-interactive stdin (piped/CI) requires `--force`; otherwise deletion is blocked to prevent accidental removal.
+</Note>
+ 
 ```bash
 pullbasectl servers delete \
+
   --server-url http://localhost:8080 \
   --admin-token $ADMIN_JWT \
   --id web-02 \
@@ -233,7 +238,7 @@ Server ID.
 Agent token for authentication (from `tokens create`).
 </ParamField>
 <ParamField flag="--version" type="string" default="latest">
-Agent version to install.
+Agent version to install. Omitted from the request when set to `latest`.
 </ParamField>
 
 ```bash

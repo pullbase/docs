@@ -26,7 +26,7 @@ PULLBASE_TLS_CERT_PATH=/etc/pullbase/certs/server.crt
 PULLBASE_TLS_KEY_PATH=/etc/pullbase/certs/server.key
 ```
 
-For development, use the `--generate-dev-certs` flag to auto-generate self-signed ECDSA P-256 certificates. **Never use self-signed certificates in production.**
+For development, you can rely on Pullbase to auto-generate self-signed ECDSA P-256 certificates when TLS is enabled and cert/key files are missing (or use the `--generate-dev-certs` flag). **Never use self-signed certificates in production.**
 
 Native TLS is ideal for:
 - Simple deployments without existing reverse proxy infrastructure
@@ -41,6 +41,7 @@ For production environments with existing infrastructure:
 - Terminate TLS at the reverse proxy using CA-signed certificates.
 - Ensure agents connect to the HTTPS endpoint, not the internal HTTP port.
 - Distribute the CA chain to agents if using internal PKI.
+- Set `X-Forwarded-Proto: https` so secure cookies remain marked `Secure` even when TLS is terminated upstream.
 
 ```nginx
 # Example: NGINX TLS termination

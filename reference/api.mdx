@@ -498,7 +498,7 @@ Returns chronological status entries including commit hash, drift flag, agent ve
 
 ### `GET /servers/{serverID}/drift`
 
-Returns detailed drift information for a server, including which packages, services, or files have drifted from the desired state.
+Returns detailed drift information for a server, including which packages, services, or files have drifted from the desired state. The `drift_details` field follows the `DriftDetails` schema: `packages` / `services` / `files` arrays of `DriftItem` objects (`type`, `name`, `expected`, `actual`, `message`) plus an optional `summary`.
 
 <ResponseExample>
 ```json Drifted
@@ -510,11 +510,13 @@ Returns detailed drift information for a server, including which packages, servi
   "detected_at": "2025-01-15T12:30:00Z",
   "drift_details": {
     "packages": [
-      {"name": "nginx", "expected": "1.24.0", "actual": "1.22.0"}
+      {"type": "package", "name": "nginx", "expected": "1.24.0", "actual": "1.22.0", "message": "version mismatch"}
     ],
     "files": [
-      {"path": "/etc/nginx/nginx.conf", "status": "modified"}
-    ]
+      {"type": "file", "name": "/etc/nginx/nginx.conf", "expected": "managed", "actual": "modified", "message": "content drift"}
+    ],
+    "services": [],
+    "summary": "nginx downgraded; config modified"
   }
 }
 ```
@@ -536,7 +538,7 @@ Returns a shell script for installing the agent on the target server.
 Agent token for authentication.
 </ParamField>
 <ParamField query="version" type="string" default="latest">
-Agent version to install.
+Agent version to install. When omitted or set to `latest`, the parameter is not sent.
 </ParamField>
 <ParamField query="ca_cert" type="string">
 Base64-encoded CA certificate for custom TLS.

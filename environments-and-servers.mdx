@@ -181,7 +181,7 @@ curl -X POST http://localhost:8080/api/v1/environments/5/test-webhook \
 
 ### Retry behavior
 
-Failed webhook deliveries are retried 3 times with exponential backoff (1s, 2s, 4s). If all retries fail, the event is logged but not persisted for later retry.
+Failed webhook deliveries are retried 3 times with exponential backoff (1s, 2s, 4s). If the server is shutting down or the request context is cancelled, retries stop early.
 
 <Tip>
 Use HTTPS endpoints for webhooks. Pullbase validates TLS certificates by default.
