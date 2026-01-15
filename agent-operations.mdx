@@ -98,36 +98,6 @@ WantedBy=multi-user.target
 </Step>
 </Steps>
 
-### Containerized agent (development only)
-
-<Warning>
-Running the agent in a container requires mounting the host filesystem and granting extensive privileges. This approach is suitable for **development and testing only**. For production servers, use the native binary with systemd.
-</Warning>
-
-```yaml docker-compose-agent.yml
-services:
-  pullbase-agent:
-    image: pullbaseio/pullbase-agent:latest
-    restart: unless-stopped
-    network_mode: host
-    privileged: true
-    environment:
-      SERVER_ID: web-01
-      CENTRAL_SERVER_URL: https://pullbase.example.com
-      AGENT_TOKEN: ${AGENT_TOKEN}
-      CACERT_PATH: /certs/ca.crt
-      SKIP_TLS_VERIFY: "false"
-    volumes:
-      - /etc/pullbase/certs:/certs:ro
-      - /:/host:rw
-```
-
-Container agent limitations:
-- Requires `privileged: true` or extensive capabilities to manage host packages/services
-- Package manager detection may fail without proper host filesystem mounts
-- Service management (systemctl) requires access to host's D-Bus socket
-- Adds container runtime as a dependency on managed hosts
-
 ## Environment variables
 
 | Variable | Required | Default | Description |
