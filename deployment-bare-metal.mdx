@@ -38,6 +38,22 @@ sudo mkdir -p /var/lib/pullbase/git-repos
   For ARM64 systems, use `pullbase-server-linux-arm64`.
 </Step>
 
+<Step title="Download pullbasectl">
+  The CLI tool is used for bootstrapping, managing servers, and automation:
+
+  ```bash
+  curl -fsSL -o pullbasectl "https://github.com/pullbase/pullbase/releases/latest/download/pullbasectl-linux-amd64"
+  sudo install -m 0755 pullbasectl /usr/local/bin/pullbasectl
+  ```
+
+  For ARM64 systems, use `pullbasectl-linux-arm64`.
+  
+  Verify the installation:
+  ```bash
+  pullbasectl --help
+  ```
+</Step>
+
 <Step title="Download migrations">
   ```bash
   curl -fsSL "https://github.com/pullbase/pullbase/releases/latest/download/migrations.tar.gz" | sudo tar -xzf - -C /var/lib/pullbase/
@@ -150,6 +166,36 @@ sudo systemctl status pullbase.service
 <Check>
 Verify the health endpoint: `curl http://localhost:8080/api/v1/healthz`
 </Check>
+
+## Bootstrap the admin
+
+On first start, Pullbase generates a one-time bootstrap secret. Use it to create your admin account:
+
+```bash
+# Read the bootstrap secret
+sudo cat /var/lib/pullbase/config/bootstrap-admin-secret.txt
+
+# Create the admin user
+pullbasectl auth bootstrap-admin \
+  --server-url http://localhost:8080 \
+  --bootstrap-secret "YOUR_SECRET" \
+  --username admin \
+  --password 'YourSecurePassword123!'
+```
+
+<Tip>
+The bootstrap secret file is automatically deleted after successful admin creation.
+</Tip>
+
+Alternatively, use the secret file directly:
+
+```bash
+pullbasectl auth bootstrap-admin \
+  --server-url http://localhost:8080 \
+  --bootstrap-secret-file /var/lib/pullbase/config/bootstrap-admin-secret.txt \
+  --username admin \
+  --password 'YourSecurePassword123!'
+```
 
 ## TLS configuration
 

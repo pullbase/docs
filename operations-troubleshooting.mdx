@@ -76,6 +76,60 @@ Operating Pullbase involves monitoring service health, responding to drift, and 
     - Ensure the webhook secret in GitHub matches `PULLBASE_WEBHOOK_SECRET_KEY`.
     - Confirm Pullbase is reachable from your Git provider (network ACLs, firewalls).
   </Accordion>
+
+  <Accordion title="TLS certificate permission denied">
+    When TLS is enabled, the server attempts to generate self-signed certificates on startup. If you see:
+    
+    ```
+    failed to generate self-signed certificates: mkdir certs: permission denied
+    ```
+    
+    **Option 1: Disable TLS** (recommended if behind a reverse proxy or for testing):
+    ```bash
+    echo "PULLBASE_TLS_ENABLED=false" | sudo tee -a /etc/pullbase/pullbase.env
+    sudo systemctl restart pullbase
+    ```
+    
+    **Option 2: Create the certs directory with proper permissions**:
+    ```bash
+    sudo mkdir -p /var/lib/pullbase/certs
+    sudo chown pullbase:pullbase /var/lib/pullbase/certs
+    
+    # Update env to use this path
+    sudo tee -a /etc/pullbase/pullbase.env > /dev/null <<'EOF'
+    PULLBASE_TLS_CERT_PATH=/var/lib/pullbase/certs/server.crt
+    PULLBASE_TLS_KEY_PATH=/var/lib/pullbase/certs/server.key
+    EOF
+    
+    sudo systemctl restart pullbase
+    ```
+    
+    For production, use CA-signed certificates or terminate TLS at a reverse proxy.
+  </Accordion>
+
+  <Accordion title="Exec format error">
+    If you see `Failed to execute /usr/local/bin/pullbase-server: Exec format error`:
+    
+    You downloaded the wrong binary for your system architecture.
+    
+    ```bash
+    # Check your architecture
+    uname -m
+    ```
+    
+    | Output | Binary to download |
+    |--------|-------------------|
+    | `x86_64` | `pullbase-server-linux-amd64` |
+    | `aarch64` or `arm64` | `pullbase-server-linux-arm64` |
+    
+    Download the correct binary and reinstall:
+    ```bash
+    sudo systemctl stop pullbase
+    curl -fsSL -o pullbase-server "https://github.com/pullbase/pullbase/releases/latest/download/pullbase-server-linux-arm64"
+    sudo install -m 0755 pullbase-server /usr/local/bin/pullbase-server
+    sudo systemctl start pullbase
+    ```
+  </Accordion>
 </AccordionGroup>
 
 ## Collect diagnostics
