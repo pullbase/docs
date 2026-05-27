@@ -147,7 +147,7 @@ docker compose exec central-server pullbasectl servers install-script \
 </Step>
 </Steps>
 
-### Create/List Users
+### Create/List/Delete Users
 
 Manage access for your team.
 
@@ -162,6 +162,12 @@ docker compose exec central-server pullbasectl users create \
   --new-username "auditor" \
   --new-password "AuditPass123!" \
   --role viewer
+
+# Delete a user's account
+docker compose exec central-server pullbasectl users delete \
+  --server-url http://localhost:8080 \
+  --user-id 7 \
+  --delete-acct-username "SomeAccount123"
 ```
 
 ### Validate Config Locally

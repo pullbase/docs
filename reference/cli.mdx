@@ -729,9 +729,24 @@ pullbasectl users list \
   --limit 50
 ```
 
-<Info>
-User deletion currently requires the web UI or the REST API (`DELETE /api/v1/users/{userID}`). CLI support is planned.
-</Info>
+### `pullbasectl users delete`
+
+Delete a user account.
+
+<ParamField flag="--user-id" type="integer" required>
+ID of the user to delete.
+</ParamField>
+<ParamField flag="--delete-acct-username" type="string" required>
+Username of the account to delete (used as confirmation).
+</ParamField>
+
+```bash
+pullbasectl users delete \
+  --server-url http://localhost:8080 \
+  --admin-token $ADMIN_JWT \
+  --user-id 7 \
+  --delete-acct-username "SomeAccount123"
+```
 
 ## Bootstrap wizard (interactive)
 
