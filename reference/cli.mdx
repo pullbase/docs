@@ -721,6 +721,11 @@ Maximum users to return (1-500).
 Pagination offset.
 </ParamField>
 
+
+<Note>
+Deletion is blocked if you attempt to delete the last active admin or your own account. The `--delete-acct-username` flag serves as confirmation and must match the username associated with the user ID.
+</Note>
+
 ```bash
 pullbasectl users list \
   --server-url http://localhost:8080 \

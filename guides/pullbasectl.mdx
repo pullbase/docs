@@ -170,6 +170,10 @@ docker compose exec central-server pullbasectl users delete \
   --delete-acct-username "SomeAccount123"
 ```
 
+<Tip>
+User deletion is blocked if you attempt to delete the last active admin or your own account.
+</Tip>
+
 ### Validate Config Locally
 
 Validate your `config.yaml` before pushing to Git to prevent errors.
