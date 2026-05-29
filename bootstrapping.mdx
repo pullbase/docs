@@ -77,11 +77,15 @@ pullbasectl users list \
   --role admin \
   --limit 50
 ```
-</CodeGroup>
 
-<Info>
-To delete a user, call `DELETE /api/v1/users/{userID}` or use the web UI. CLI deletion support is in development.
-</Info>
+```bash Delete a user
+pullbasectl users delete \
+  --server-url http://localhost:8080 \
+  --admin-token $ADMIN_JWT \
+  --user-id 7 \
+  --delete-acct-username 'SomeAccount123'
+```
+</CodeGroup>
 
 ### Web UI
 
